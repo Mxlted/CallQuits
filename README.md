@@ -25,6 +25,18 @@ Force quit is off by default. Enabling it requires acknowledging the unsaved-wor
 
 Finder, CallQuits, and protected system processes cannot be targeted. Music, Spotify, Mail, Messages, FaceTime, Terminal, and iTerm start in the editable exclusions list because closing their last window often should leave them running. Add your own apps or remove these optional defaults in settings.
 
+## Download
+
+[CallQuits 0.1.0](https://github.com/Mxlted/CallQuits/releases/tag/v0.1.0) is a private development release for **Apple silicon Macs running macOS 14 or newer**. Repository access is required to download it. The ZIP is **ad hoc signed and not notarized**; it does not carry a verified Developer ID, and Gatekeeper may block its first launch. Intel Macs require a local build.
+
+Download the ZIP and `SHA256SUMS.txt` from the release, then verify them from the download directory:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+Extract the ZIP, move `CallQuits.app` to `/Applications`, and follow the Accessibility setup below. See the [0.1.0 release notes](docs/releases/v0.1.0.md) for validation and limitations.
+
 ## Build and use
 
 Install Xcode or the Command Line Tools with Swift 5.9 or newer, then run:
