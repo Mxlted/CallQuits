@@ -4,7 +4,7 @@
 
 ## macOS blocks the app
 
-Version 0.1.2 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
+Version 0.1.3 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
 
 If macOS instead reports an unverified developer, a damaged app, or another security problem, check that you downloaded the current ZIP from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases) and [verify the archive](#verify-your-download). Download a fresh copy if needed. If the warning persists, report the exact message rather than bypassing it.
 
@@ -71,7 +71,7 @@ Download the release ZIP and its `SHA256SUMS.txt` from the **same release** into
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
-The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.2 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
+The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.3 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
 
 ## Remove CallQuits
 
