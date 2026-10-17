@@ -28,8 +28,6 @@ targets:
         PRODUCT_NAME: CallQuits
         INFOPLIST_FILE: Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
 schemes:
   CallQuits:
     build:
