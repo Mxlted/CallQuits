@@ -71,10 +71,10 @@ final class EventIdentityTests: XCTestCase {
     func testInvalidProcessIdentifiersFailClosed() {
         let resolved = identity()!
         for invalid in [Int64.min, -1, 1, Int64(Int32.max) + 1, Int64.max] {
-            XCTAssertNil(identity(native: invalid))
-            XCTAssertNil(identity(owner: invalid))
-            XCTAssertFalse(matches(resolved, native: invalid))
-            XCTAssertFalse(matches(resolved, owner: invalid))
+            XCTAssertNil(identity(native: invalid), "press native PID=\(invalid)")
+            XCTAssertNil(identity(owner: invalid), "press window owner PID=\(invalid)")
+            XCTAssertFalse(matches(resolved, native: invalid), "release native PID=\(invalid)")
+            XCTAssertFalse(matches(resolved, owner: invalid), "release window owner PID=\(invalid)")
         }
         // Absent owner metadata is nil; a supplied zero is an invalid lookup result.
         XCTAssertNil(identity(owner: 0))
@@ -84,8 +84,8 @@ final class EventIdentityTests: XCTestCase {
     func testInvalidGlobalWindowIdentifiersFailClosed() {
         let resolved = identity()!
         for invalid in [Int64.min, -1, Int64(UInt32.max) + 1, Int64.max] {
-            XCTAssertNil(identity(window: invalid))
-            XCTAssertFalse(matches(resolved, window: invalid))
+            XCTAssertNil(identity(window: invalid), "press window ID=\(invalid)")
+            XCTAssertFalse(matches(resolved, window: invalid), "release window ID=\(invalid)")
         }
     }
 

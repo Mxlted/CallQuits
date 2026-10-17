@@ -39,14 +39,16 @@ final class CloseGestureTests: XCTestCase {
     func testDifferentEventRecipientCannotReceiveTheQuit() {
         for modifiers in [CloseGestureModifiers.normal, .force] {
             for otherPID: Int32 in [-1, 0, 1, 43, Int32.max] {
-                XCTAssertNil(release(gesture(modifiers), targetProcessID: otherPID, modifiers: modifiers))
+                XCTAssertNil(release(gesture(modifiers), targetProcessID: otherPID, modifiers: modifiers),
+                             "press PID=42, release PID=\(otherPID), modifiers=\(modifiers)")
             }
         }
     }
 
     func testUnknownEventRecipientCannotStartAGesture() {
         for unknownPID: Int32 in [-1, 0, 1] {
-            XCTAssertNil(CloseGesture(x: 100, y: 200, timestamp: 10, targetProcessID: unknownPID, modifiers: .normal))
+            XCTAssertNil(CloseGesture(x: 100, y: 200, timestamp: 10, targetProcessID: unknownPID, modifiers: .normal),
+                         "press PID=\(unknownPID)")
         }
     }
 
@@ -71,14 +73,17 @@ final class CloseGestureTests: XCTestCase {
 
     func testInvalidNumbersFailClosed() {
         for invalid in [Double.nan, Double.infinity, -Double.infinity] {
-            XCTAssertNil(CloseGesture(x: invalid, y: 200, timestamp: 10, targetProcessID: 42, modifiers: .normal))
-            XCTAssertNil(CloseGesture(x: 100, y: invalid, timestamp: 10, targetProcessID: 42, modifiers: .normal))
-            XCTAssertNil(CloseGesture(x: 100, y: 200, timestamp: invalid, targetProcessID: 42, modifiers: .normal))
-            XCTAssertFalse(gesture().allowsDrag(toX: invalid, y: 200))
-            XCTAssertFalse(gesture().allowsDrag(toX: 100, y: invalid))
-            XCTAssertNil(release(gesture(), x: invalid))
-            XCTAssertNil(release(gesture(), y: invalid))
-            XCTAssertNil(release(gesture(), timestamp: invalid))
+            XCTAssertNil(CloseGesture(x: invalid, y: 200, timestamp: 10, targetProcessID: 42, modifiers: .normal),
+                         "press x=\(invalid)")
+            XCTAssertNil(CloseGesture(x: 100, y: invalid, timestamp: 10, targetProcessID: 42, modifiers: .normal),
+                         "press y=\(invalid)")
+            XCTAssertNil(CloseGesture(x: 100, y: 200, timestamp: invalid, targetProcessID: 42, modifiers: .normal),
+                         "press timestamp=\(invalid)")
+            XCTAssertFalse(gesture().allowsDrag(toX: invalid, y: 200), "drag x=\(invalid)")
+            XCTAssertFalse(gesture().allowsDrag(toX: 100, y: invalid), "drag y=\(invalid)")
+            XCTAssertNil(release(gesture(), x: invalid), "release x=\(invalid)")
+            XCTAssertNil(release(gesture(), y: invalid), "release y=\(invalid)")
+            XCTAssertNil(release(gesture(), timestamp: invalid), "release timestamp=\(invalid)")
         }
         XCTAssertNil(CloseGesture(x: 100, y: 200, timestamp: -1, targetProcessID: 42, modifiers: .normal))
     }

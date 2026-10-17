@@ -12,26 +12,31 @@ final class AppProtectionTests: XCTestCase {
             "com.apple.screencaptureui"
         ]
         for identifier in identifiers {
-            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99), identifier)
-            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier.uppercased(), processID: 42, ownProcessID: 99), identifier)
+            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99),
+                          "protected bundle identifier=\(identifier)")
+            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier.uppercased(), processID: 42, ownProcessID: 99),
+                          "uppercase protected bundle identifier=\(identifier.uppercased())")
         }
     }
 
     func testProtectsSelfAndReservedProcessIDs() {
         for processID: Int32 in [-1, 0, 1, 99] {
-            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: "example.app", processID: processID, ownProcessID: 99))
+            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: "example.app", processID: processID, ownProcessID: 99),
+                          "target PID=\(processID), own PID=99")
         }
     }
 
     func testUnknownOrMalformedIdentityFailsClosed() {
         for identifier: String? in [nil, "", " ", "\n", " com.apple.finder", "com.apple.finder ", "example. app"] {
-            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99))
+            XCTAssertTrue(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99),
+                          "bundle identifier=\(String(reflecting: identifier))")
         }
     }
 
     func testAllowsRegularUserAppIdentitiesWithoutExcludingAllAppleApps() {
         for identifier in ["com.apple.TextEdit", "com.apple.Safari", "com.example.fixture", "org.mozilla.firefox"] {
-            XCTAssertFalse(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99), identifier)
+            XCTAssertFalse(AppProtection.isProtected(bundleIdentifier: identifier, processID: 42, ownProcessID: 99),
+                           "allowed bundle identifier=\(identifier)")
         }
     }
 }

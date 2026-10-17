@@ -32,9 +32,22 @@ public struct CloseSnapshot: Sendable {
     }
 }
 
+/// What was observed when a verified close attempt could no longer safely request a quit.
+/// None of these reasons implies that the user canceled a save dialog.
+public enum CloseCancellationReason: Equatable, Sendable {
+    case remainingWindows
+    case blockingUI
+    case replacementWindow
+    case unreliableSnapshot
+    case windowSetChanged
+    case expired
+    case invalidTiming
+    case alreadyFinished
+}
+
 public enum CloseDecision: Equatable, Sendable {
     case wait
-    case cancel
+    case cancel(CloseCancellationReason)
     case quit
 }
 
@@ -53,7 +66,7 @@ public struct CloseSession: Sendable {
     private var previousObservationAt: TimeInterval
     private var disappearanceObservedAt: TimeInterval?
     private var confirmationWindowCount: Int?
-    private var isFinished = false
+    private var finishedReason: CloseCancellationReason?
 
     public init(behavior: CloseBehavior, startedAt: TimeInterval) {
         self.behavior = behavior
@@ -62,30 +75,29 @@ public struct CloseSession: Sendable {
     }
 
     public mutating func evaluate(snapshot: CloseSnapshot, now: TimeInterval) -> CloseDecision {
-        guard !isFinished else { return .cancel }
+        if let finishedReason { return .cancel(finishedReason) }
 
         guard startedAt.isFinite,
               now.isFinite,
-              now >= previousObservationAt,
-              now - startedAt < Self.maximumDuration,
-              snapshot.isReliable,
-              !snapshot.hasBlockingUI,
-              !snapshot.hasReplacementWindow,
+              now >= previousObservationAt
+        else { return cancel(.invalidTiming) }
+        guard now - startedAt < Self.maximumDuration else { return cancel(.expired) }
+        guard snapshot.isReliable,
               snapshot.windowCount >= 0,
               !snapshot.targetWindowPresent || snapshot.windowCount > 0
-        else {
-            return finish(.cancel)
-        }
+        else { return cancel(.unreliableSnapshot) }
+        guard !snapshot.hasBlockingUI else { return cancel(.blockingUI) }
+        guard !snapshot.hasReplacementWindow else { return cancel(.replacementWindow) }
         previousObservationAt = now
 
         if snapshot.targetWindowPresent {
             // A window that reappears may represent a canceled close or reused AX identity.
-            guard disappearanceObservedAt == nil else { return finish(.cancel) }
+            guard disappearanceObservedAt == nil else { return cancel(.windowSetChanged) }
             return .wait
         }
 
         if behavior == .lastWindow && snapshot.windowCount != 0 {
-            return finish(.cancel)
+            return cancel(.remainingWindows)
         }
 
         guard let disappearedAt = disappearanceObservedAt else {
@@ -95,7 +107,7 @@ public struct CloseSession: Sendable {
         }
 
         guard snapshot.windowCount == confirmationWindowCount else {
-            return finish(.cancel)
+            return cancel(.windowSetChanged)
         }
 
         guard now - disappearedAt >= Self.confirmationInterval,
@@ -103,11 +115,12 @@ public struct CloseSession: Sendable {
         else {
             return .wait
         }
-        return finish(.quit)
+        finishedReason = .alreadyFinished
+        return .quit
     }
 
-    private mutating func finish(_ decision: CloseDecision) -> CloseDecision {
-        isFinished = true
-        return decision
+    private mutating func cancel(_ reason: CloseCancellationReason) -> CloseDecision {
+        finishedReason = reason
+        return .cancel(reason)
     }
 }
