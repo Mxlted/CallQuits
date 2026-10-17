@@ -2,7 +2,7 @@
 
 `swift test` exercises the independent policy with simulated application and window states. `./scripts/build.sh` compiles and signs a real app bundle. Neither proves that Accessibility permission is granted or that a particular app exposes reliable window metadata.
 
-The initial suite contains 29 unit tests covering gesture identity and modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. It does not drive the real event monitor or Accessibility observer.
+The initial suite contains 40 unit tests covering exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. It does not drive the real Core Graphics event tap or Accessibility observer.
 
 ## Disposable fixture
 
@@ -30,6 +30,9 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Option-, Command-, or Control-click red button | App's native modifier behavior; no CallQuits quit request. |
 | Press without Shift, release with Shift, or vice versa | No CallQuits quit request; supported modifier intent must match at mouse-down and mouse-up. |
 | Native mouse-down and mouse-up report different target process IDs | No quit request, even when screen coordinates match. |
+| Native target PID is absent but the event carries a valid global window ID | Resolve only that exact window's owner and require the AX close control to belong to it. |
+| Native close removes the original window entry before mouse-up | A matching original stamped window ID can preserve the verified owner; conflicting process/window metadata still cancels. |
+| Release reports the newly exposed underlying window or a different positive owner | Cancel; the quit request cannot transfer to the underlying application. |
 | Shift-click with force quit disabled | Native close behavior; no CallQuits quit request. |
 | Enable unsaved changes, click red, select Cancel | App and document remain; pending quit is canceled. |
 | Enable unsaved changes, click red, then Save or Don't Save | Native sheet handles close; CallQuits does not reuse the interrupted intent to quit later. |
@@ -44,6 +47,7 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Exclude fixture; repeat ordinary and enabled Shift-click | Neither path terminates it. |
 | Protected apps such as Finder or CallQuits | Verify policy protection with unit tests; do not terminate actual system apps. |
 | Accessibility denied or revoked | Explain permission status; do not act on uncertain state. |
+| Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; only resume when enabled and Accessibility trust remains available. |
 | Unreadable or unsupported AX tree | Skip; never infer zero windows from an error. |
 | App does not support registration for AX window-created notifications | Skip automatic graceful quit. Sheet notifications are optional because snapshots also inspect sheets. |
 | Very fast click closes the original window before its AX close button can be read | Native close proceeds; skip automatic quit because the gesture could not be verified. |
@@ -58,4 +62,10 @@ Fullscreen, Spaces, multiple displays, native event target IDs, notification del
 
 Record the macOS version, build/commit, permissions, target app, window layout, action, and observed result. Separate the time of the quit request from the visible disappearance of the Dock indicator. A successful `terminate()` request does not prove the app exited; the application may still be saving or may decline.
 
-No completed live compatibility matrix is claimed by this document. Fill it in only with observed results from a permission-enabled desktop session.
+## Observed development results — October 16, 2026
+
+With Accessibility granted and the listen-only annotated session event tap active, the user performed physical red close-button clicks. CallQuits recorded graceful quit requests for two Google Chrome launches and one Safari launch. Subsequent process checks confirmed that all three target processes exited. These observations validate that physical clicks can reach the tap, resolve the target, and trigger a real graceful quit.
+
+Computer-use automation clicks did not produce a usable event through this path. Direct process delivery or Accessibility actions are possible explanations, but the delivery mechanism was not verified. Those attempts are not evidence for or against physical-pointer behavior.
+
+The full disposable-fixture matrix, multiple-window behavior, save cancellation, minimized windows, other Spaces, and Shift-click force quit still need live verification. No exhaustive compatibility result or measured Dock-indicator latency is claimed. Use the fixture for further integration tests, and update this record only with observed results.

@@ -35,7 +35,9 @@ open build/CallQuits.app
 
 The build script produces a locally signed app for your Mac's architecture. It does not install or launch the app. For a stable installation, move `build/CallQuits.app` to `/Applications` before enabling launch at login or granting permissions.
 
-On first launch, use the menu bar controls to grant **Accessibility** access in System Settings → Privacy & Security → Accessibility. This is required to identify the actual close button and inspect an app's windows. CallQuits does not need Screen Recording or Full Disk Access. Reopen the app after granting access if the permission status has not updated.
+On first launch, use the menu bar controls to grant **Accessibility** access in System Settings → Privacy & Security → Accessibility. This is required to identify the actual close button and inspect an app's windows. Accessibility also covers listening to mouse events, so CallQuits does not request separate Input Monitoring access. It does not need Screen Recording or Full Disk Access. Reopen the app after granting access if the permission status has not updated. [Apple's permission guidance](https://developer.apple.com/forums/thread/828052).
+
+Rebuilding an ad hoc-signed app can leave a stale Accessibility entry. If access still appears unavailable, quit CallQuits, remove its old entry from the Accessibility list, add the current app bundle again, enable it, and relaunch. Toggling the existing entry alone was insufficient during development.
 
 Use the menu bar to pause CallQuits, open settings, or quit it. Settings include the quit behavior, Shift-click force quit, launch at login, and application exclusions. Launch at login may require approval in System Settings → General → Login Items.
 
@@ -51,15 +53,15 @@ The Xcode app target compiles the UI and policy in one module. SwiftPM keeps the
 
 ## How it decides
 
-CallQuits uses a public AppKit mouse-event monitor and Accessibility hit testing to verify the red button. It does not swallow mouse events, send keyboard shortcuts, guess button positions, or run a continuous scan of every app's windows.
+CallQuits uses a public Core Graphics event tap in listen-only mode and Accessibility hit testing to verify the red button. The tap observes only left-button presses, releases, and drags, using the original annotated event metadata. It does not swallow or rewrite mouse events, send keyboard shortcuts, guess button positions, or run a continuous scan of every app's windows.
 
-The mouse-down and mouse-up must target the same app with matching modifiers. After a verified normal click, a short, bounded sequence of Accessibility snapshots checks that the clicked window disappeared, looks for sheets and replacement windows, and evaluates the selected quit rule. A temporary Accessibility observer also watches for newly created windows between snapshots. Apps that do not support that notification are skipped for automatic graceful quit. Unknown or incomplete state prevents termination. Synchronous Accessibility calls and observer registration run away from the UI thread with time limits; a newer interaction or settings change invalidates stale work.
+The mouse-down and mouse-up must identify the same original recipient with matching modifiers. Identity comes from the event's target process or its exact stamped window ID and verified owner; the app under the pointer later is never used as a guess. After a verified normal click, a short, bounded sequence of Accessibility snapshots checks that the clicked window disappeared, looks for sheets and replacement windows, and evaluates the selected quit rule. A temporary Accessibility observer also watches for newly created windows between snapshots. Apps that do not support that notification are skipped for automatic graceful quit. Unknown or incomplete state prevents termination. Synchronous Accessibility calls and observer registration run away from the UI thread with time limits; a newer interaction or settings change invalidates stale work.
 
 If a save sheet interrupts the close, CallQuits steps aside even if you later choose Save or Don't Save. It does not schedule a surprise quit when that sheet finishes.
 
-Some apps expose incomplete or unusual Accessibility trees. A very fast click can close the window before the asynchronous mouse-down hit test identifies its close button. These cases intentionally do nothing. An unresponsive app may not expose enough information even for Shift-click force quit; use the macOS Force Quit window in that case. The Activity pane reports permission changes and quit requests; skipped clicks may not produce an entry.
+Some apps expose incomplete or unusual Accessibility trees. A very fast click can close the window before the asynchronous mouse-down hit test identifies its close button. These cases intentionally do nothing. An unresponsive app may not expose enough information even for Shift-click force quit; use the macOS Force Quit window in that case. The Activity pane reports permission changes, quit requests, and some reasons for keeping an app open; unrecognized clicks may not produce an entry.
 
-Permissions and real applications affect behavior. Unit tests validate the policy, but do not establish compatibility with every macOS app or measure visible Dock-indicator latency. See the [manual test matrix](docs/TESTING.md) and [implementation notes](docs/ARCHITECTURE.md).
+Permissions and real applications affect behavior. User-operated close-button checks produced successful quit requests and confirmed process exits for two Chrome launches and one Safari launch. The wider fixture and multiple-window matrix remains unverified. Unit tests validate the policy, but do not establish compatibility with every macOS app or measure visible Dock-indicator latency. See the [manual test matrix and observed results](docs/TESTING.md) and [implementation notes](docs/ARCHITECTURE.md).
 
 ## Privacy and distribution
 

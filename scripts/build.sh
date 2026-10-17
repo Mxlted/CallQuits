@@ -21,8 +21,9 @@ SWIFT_FLAGS=(--package-path "$ROOT" --scratch-path "$BUILD_ROOT/swiftpm" --cache
 swift build "${SWIFT_FLAGS[@]}" --product CallQuits
 BIN_DIR="$(swift build "${SWIFT_FLAGS[@]}" --show-bin-path)"
 
-# Replace only our generated bundle, never an installed application.
-rm -rf "$APP"
+# Preserve the bundle directory identity so Finder/open panels do not retain stale file references.
+# Replace only generated contents, never an installed application.
+rm -rf "$APP/Contents"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/CallQuits" "$APP/Contents/MacOS/CallQuits"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"

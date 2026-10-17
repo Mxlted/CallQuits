@@ -213,7 +213,7 @@ struct SettingsView: View {
         }
 
         VStack(alignment: .leading, spacing: 6) {
-            Label("Hold Option while clicking to close just the window.", systemImage: "option")
+            Label("Hold Option while clicking to bypass CallQuits.", systemImage: "option")
             Text("Command- and Control-clicks are left alone. Keyboard shortcuts stay unchanged. If a close is canceled or a dialog appears, CallQuits steps aside.")
             if model.forceQuitEnabled {
                 Text("Force quit needs a verified close button. For an unresponsive app, use macOS Force Quit if Shift-click cannot detect it.")

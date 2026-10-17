@@ -12,6 +12,6 @@ The default build is a development artifact. Ad hoc signing lets it run locally,
 
 The build script emits a binary for the host architecture. A public universal release needs both Apple silicon and Intel slices, or separate clearly labeled artifacts, and validation on each supported architecture. The checked-in workflow currently produces an ad hoc development build, not an automatically published release.
 
-Accessibility permissions can depend on application location and signing identity. Test with the final app in `/Applications`; rebuilding or replacing an ad hoc-signed binary may require granting access again. Do not promise that a local development permission grant will carry over to a signed release.
+Accessibility permissions can depend on application location and signing identity. Test with the final app in `/Applications`; rebuilding or replacing an ad hoc-signed binary may require removing its stale Accessibility entry and adding the current bundle again. Toggling the existing entry alone was insufficient during development. Do not promise that a local development permission grant will carry over to a signed release.
 
 Apple's documentation covers [Developer ID distribution](https://developer.apple.com/developer-id/) and [notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).

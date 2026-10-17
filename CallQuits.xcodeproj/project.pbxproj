@@ -11,6 +11,7 @@
 		4754E20891DA5F51110B6995 /* AppProtection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92ACAF51D3B12802381F3EF1 /* AppProtection.swift */; };
 		5EB0AE804CE4F734E3A674D5 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA1EC7AED0735F288018E46 /* AppModel.swift */; };
 		7446D2FA40B975B61177713D /* AccessibilityClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE37C19FA256F7AA4D6F85E /* AccessibilityClient.swift */; };
+		834955C5E7D0D5F448D698E8 /* EventIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898952BDF4EFA4B82830501C /* EventIdentity.swift */; };
 		98BECCF2BE07CD628C15671E /* CloseSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD95AF85DD63232CE6A26760 /* CloseSession.swift */; };
 		AC7BE072973252CCEB145045 /* CloseMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C63E1E18A5E0F1F5B183B307 /* CloseMonitor.swift */; };
 		C2FD3A53FED56D1C127B6F44 /* CloseGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB9437FAFC3B06106BBCB43C /* CloseGesture.swift */; };
@@ -22,6 +23,7 @@
 		2F6DA94A45F3435CABB03598 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		7BA1EC7AED0735F288018E46 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8591D4CE1E180DAF41D3515C /* CallQuitsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallQuitsApp.swift; sourceTree = "<group>"; };
+		898952BDF4EFA4B82830501C /* EventIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventIdentity.swift; sourceTree = "<group>"; };
 		92ACAF51D3B12802381F3EF1 /* AppProtection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppProtection.swift; sourceTree = "<group>"; };
 		AB9437FAFC3B06106BBCB43C /* CloseGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloseGesture.swift; sourceTree = "<group>"; };
 		AD95AF85DD63232CE6A26760 /* CloseSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloseSession.swift; sourceTree = "<group>"; };
@@ -46,6 +48,7 @@
 				92ACAF51D3B12802381F3EF1 /* AppProtection.swift */,
 				AB9437FAFC3B06106BBCB43C /* CloseGesture.swift */,
 				AD95AF85DD63232CE6A26760 /* CloseSession.swift */,
+				898952BDF4EFA4B82830501C /* EventIdentity.swift */,
 			);
 			path = CallQuitsCore;
 			sourceTree = "<group>";
@@ -165,6 +168,7 @@
 				C2FD3A53FED56D1C127B6F44 /* CloseGesture.swift in Sources */,
 				AC7BE072973252CCEB145045 /* CloseMonitor.swift in Sources */,
 				98BECCF2BE07CD628C15671E /* CloseSession.swift in Sources */,
+				834955C5E7D0D5F448D698E8 /* EventIdentity.swift in Sources */,
 				CB41BA3C1901C0CBBC2F3A64 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
