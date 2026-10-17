@@ -4,13 +4,13 @@
 
 ## macOS blocks the app
 
-The current release is ad hoc signed and not notarized. That means it does not have a verified Developer ID, and Apple has not checked it through the notarization service.
+Version 0.1.1 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
 
-If macOS blocks it because the developer cannot be verified, first check that you downloaded it from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases). You can also [verify the archive](#verify-your-download).
+If macOS instead reports an unverified developer, a damaged app, or another security problem, check that you downloaded the current ZIP from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases) and [verify the archive](#verify-your-download). Download a fresh copy if needed. If the warning persists, report the exact message rather than bypassing it.
 
-If you trust the download and choose to open it, try launching CallQuits once, then open **System Settings → Privacy & Security**. Look for the message about CallQuits and choose **Open Anyway**, if available. Confirm the macOS prompt. See [Apple's first-launch guidance](https://support.apple.com/en-us/102445) for the current steps and explanation of the different warnings.
+Older v0.1.0 downloads and local development builds are ad hoc signed and not notarized. Use the current public release for normal installation. See [Apple's first-launch guidance](https://support.apple.com/en-us/102445) for an explanation of macOS security prompts.
 
-This approval is separate from Accessibility permission. A managed Mac may prevent it. If macOS reports malware or that the app will damage your computer, do not treat that as the ordinary unidentified-developer warning.
+First-launch approval is separate from Accessibility permission. A managed Mac may have additional installation restrictions.
 
 ## Enable Accessibility
 
@@ -23,7 +23,7 @@ CallQuits uses Accessibility to identify the actual red close button and read wi
 
 ### Permission is enabled, but CallQuits still reports no access
 
-Replacing or rebuilding an ad hoc-signed app can leave a stale Accessibility entry. Quit CallQuits, remove its old entry from the Accessibility list, add the current copy from Applications, enable it, and relaunch. During development, toggling the existing entry alone did not always restore access.
+Replacing or rebuilding an ad hoc-signed app can leave a stale Accessibility entry. This can also affect an upgrade from v0.1.0 to the Developer ID-signed release. Quit CallQuits, remove its old entry from the Accessibility list, add the current copy from Applications, enable it, and relaunch. During development, toggling the existing entry alone did not always restore access.
 
 ### Monitoring is unavailable
 
@@ -58,6 +58,8 @@ CallQuits has no automatic updater.
 3. Extract the ZIP and replace the old app in Applications.
 4. Open it and check its permission status. If needed, [refresh the Accessibility entry](#permission-is-enabled-but-callquits-still-reports-no-access).
 
+When upgrading from v0.1.0, the signing identity changes. Do not assume its old Accessibility grant will carry over; check that CallQuits reports monitoring is active before using it.
+
 ## Verify your download
 
 Download the release ZIP and its `SHA256SUMS.txt` from the **same release** into one folder. In Terminal, switch to that folder and run:
@@ -66,7 +68,7 @@ Download the release ZIP and its `SHA256SUMS.txt` from the **same release** into
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
-The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive; it does not provide Developer ID signing or Apple notarization.
+The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.1 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
 
 ## Remove CallQuits
 
