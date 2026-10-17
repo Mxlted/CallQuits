@@ -15,11 +15,18 @@ final class AccessibilityClient {
         let allowsApplicationHide: Bool
     }
 
-    private enum ReadError: Error { case unavailable, unexpectedValue, exceededBudget }
+    private enum ReadError: Error { case unavailable(AXError), unexpectedValue, exceededBudget }
+    typealias AttributeReader = (AXUIElement, CFString) -> (AXError, CFTypeRef?)
+    private let readAttribute: AttributeReader
     private let system = AXUIElementCreateSystemWide()
     private var deadline: TimeInterval = 0
 
-    init() {
+    init(readAttribute: @escaping AttributeReader = { element, attribute in
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
+        return (error, value)
+    }) {
+        self.readAttribute = readAttribute
         // The system-wide element sets the default for every AX object in this process.
         AXUIElementSetMessagingTimeout(system, 0.12)
     }
@@ -71,14 +78,35 @@ final class AccessibilityClient {
     func snapshot(for hit: Hit) -> CloseSnapshot {
         deadline = ProcessInfo.processInfo.systemUptime + 0.45
         do {
-            let current = try windows(hit.appElement)
-            let targetPresent = current.contains { CFEqual($0, hit.window) }
+            var current = try windows(hit.appElement)
             var blocking = false
             // All windows count, including minimized windows, panels, and other Spaces.
             // Inspect sheets/modal state only while windows exist; empty is not guessed on AX errors.
             for window in current {
-                if try hasBlockingUI(window) { blocking = true; break }
+                do {
+                    if try hasBlockingUI(window) { blocking = true; break }
+                } catch ReadError.unavailable(.invalidUIElement) where CFEqual(window, hit.window) {
+                    // Native close can destroy the clicked window (or a child) after AXWindows
+                    // enumerates it. Confirm that exact disappearance, rather than treating a
+                    // dead reference as an unreadable live window. No timeout/unsupported-value
+                    // fallback, extra delay, or renewed budget is allowed here.
+                    let remaining = current.filter { !CFEqual($0, hit.window) }
+                    let refreshed = try windows(hit.appElement)
+                    guard refreshed.count == remaining.count,
+                          !refreshed.contains(where: { CFEqual($0, hit.window) }),
+                          remaining.allSatisfy({ original in refreshed.contains { CFEqual($0, original) } }),
+                          refreshed.allSatisfy({ survivor in remaining.contains { CFEqual($0, survivor) } })
+                    else { throw ReadError.unexpectedValue }
+                    // Start a complete inspection of the surviving set. A second failure is
+                    // terminal; never keep retrying an app with unreliable Accessibility.
+                    current = refreshed
+                    for survivor in current {
+                        if try hasBlockingUI(survivor) { blocking = true; break }
+                    }
+                    break
+                }
             }
+            let targetPresent = current.contains { CFEqual($0, hit.window) }
             let hidden = hit.application.isHidden
             // A hidden Discord window is retained, not destroyed. Read its minimized state
             // explicitly; unsupported metadata must never authorize the compatibility path.
@@ -107,10 +135,9 @@ final class AccessibilityClient {
 
     private func value(_ element: AXUIElement, _ attribute: String, optional: Bool = false) throws -> CFTypeRef? {
         guard ProcessInfo.processInfo.systemUptime < deadline else { throw ReadError.exceededBudget }
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        let (error, value) = readAttribute(element, attribute as CFString)
         if optional && (error == .attributeUnsupported || error == .noValue) { return nil }
-        guard error == .success else { throw ReadError.unavailable }
+        guard error == .success else { throw ReadError.unavailable(error) }
         return value
     }
 

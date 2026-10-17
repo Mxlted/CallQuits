@@ -2,7 +2,7 @@
 
 `swift test` exercises the independent policy with simulated application and window states. `./scripts/build.sh` compiles and signs a real app bundle. Neither proves that Accessibility permission is granted or that a particular app exposes reliable window metadata.
 
-The XCTest suite in `Tests/CallQuitsCoreTests/` covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. `Tests/CallQuitsTests/` exercises AppModel status mapping and event-tap recovery with simulated settings and monitoring state. Neither suite drives the real Core Graphics event tap or Accessibility observer.
+The XCTest suite in `Tests/CallQuitsCoreTests/` covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. `Tests/CallQuitsTests/` exercises AppModel status mapping and event-tap recovery with simulated settings and monitoring state, plus Accessibility snapshot recovery through an injected attribute reader. Neither suite drives the real Core Graphics event tap or Accessibility observer.
 
 ## Routine validation
 
@@ -99,6 +99,7 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; resume only after the tap is confirmed enabled and Accessibility trust remains available. A user-disabled tap stays paused until the user chooses Enable CallQuits. Retry monitoring appears only while enabled, trusted, and unavailable. |
 | Intentional pause or CallQuits disabled | Permission refresh and monitoring retries must not resume capture implicitly. |
 | Unreadable or unsupported AX tree | Skip; never infer zero windows from an error. |
+| Clicked window disappears between AX enumeration and inspection | Only `invalidUIElement` from that window or its children permits one immediate fresh enumeration. Continue only if exactly the clicked window disappeared and all surviving windows can be inspected; the normal stable confirmation still applies. |
 | App does not support registration for AX window-created notifications | Skip automatic graceful quit. Sheet notifications are optional because snapshots also inspect sheets. |
 | Very fast click closes the original window before its AX close button can be read | Native close proceeds; skip automatic quit because the gesture could not be verified. |
 | Hung target process | Bound waiting, keep CallQuits responsive, and skip if identity/control cannot be verified. Shift-click is not guaranteed; macOS Force Quit remains available. |
@@ -151,3 +152,13 @@ Apple accepted notarization submission `d673cd5e-6c4d-4fbe-9e2e-3821d21409cd`; i
 The delivered ZIP SHA-256 is `d743f422be4da4481cc9fc239db81112363db5f693014b0554dec1da3b00e602`. The earlier physical Discord test used the preceding development build with the same application source, not this exact versioned archive. The remaining live-matrix, keyboard/notification-delivery, macOS 14/Intel runtime, separate-Mac/account installation/upgrade, and latency limitations above still apply.
 
 The final stapled v0.1.2 app was installed on this Mac. Its installed signature and ticket verified, and computer-use inspection showed version 0.1.2 and **Watching close buttons**, with the existing Accessibility grant retained. This same-Mac check does not establish fresh-install or upgrade behavior on another Mac/account.
+
+## Closing-window snapshot race — October 17, 2026
+
+The user reported intermittent Chrome failures with Activity saying **Accessibility could not reliably confirm the window state**. A disposable native fixture reproduced a matching failure: after `AXWindows` enumerated the clicked target, the fixture closed that window immediately before the adapter read `AXModal`. The real AX read returned `invalidUIElement` (`-25202`). The old adapter canceled with `unreliableSnapshot` in all eight repetitions; the updated adapter obtained a complete empty snapshot and reached a quit decision in all eight repetitions. This establishes a window-lifecycle race, not the exact underlying error in the user's Chrome process.
+
+The updated fixture snapshot took 2.36–7.60 ms; the policy reached its quit decision 211–220 ms after snapshot processing began, with the existing 150 ms stable confirmation and 200 ms minimum unchanged. Recovery adds no scheduled delay. These measurements used self-AX with verified-click qualification injected and a controlled close between reads. They are not physical click-to-request, actual process-exit, or Dock-disappearance timings; the fixture was quit separately during cleanup. External AX permission, native event capture, observer delivery, and Chrome itself were not exercised.
+
+Additional fixture cases retained cancellation for messaging failures, a still-present invalid target, failed fresh enumeration, unreadable surviving windows, replacement windows, other remaining windows, and sheets, including a sheet appearing on a survivor during recovery. XCTest separately covers invalid child elements, malformed values, survivor identity changes, repeated failure, the shared read budget, and unchanged close confirmation. Tests with an injected reader simulate AX results and do not establish app compatibility. The earlier live-matrix gaps still apply.
+
+Routine validation passed: 77 debug XCTest cases, a separate release-configuration development bundle with ad hoc signing and strict signature verification, and whitespace checks. The release build required desktop execution access for `dsymutil`. Finalized release artifacts and the installed application were preserved.

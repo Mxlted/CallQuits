@@ -15,9 +15,11 @@ Discord (`com.hnc.Discord`) has a narrow hide-on-close exception. It must be vis
 
 The adapter runs synchronous Accessibility queries and observer registration on one serial background queue, uses short IPC timeouts, and discards stale work. The observer's run-loop source is installed on the main run loop and removed when the decision ends or is invalidated. This observer exists only for a pending normal close decision; the app does not periodically sweep every application.
 
+Window enumeration can race with native close. If inspecting the clicked window or one of its children returns `invalidUIElement`, one immediate enumeration may confirm that only the clicked window disappeared. The remaining identities must match exactly, and every surviving window is inspected again within the original snapshot budget. This does not retry timeouts, unsupported or malformed values, invalid unrelated windows, or a target that remains present. A fresh complete snapshot still goes through the unchanged 150 ms stable confirmation and 200 ms minimum elapsed time; recovery adds no fixed delay.
+
 The mouse tap has its own main-run-loop source and is removed when monitoring stops or is reconfigured. On a timeout, CallQuits invalidates pending work and only re-enables the tap while the utility is enabled and Accessibility trust remains available. User-requested tap disabling pauses CallQuits until the user enables it again. A local AppKit event monitor cancels pending work when the user interacts with CallQuits itself; it is not the source of cross-application identity.
 
-The finite sampling after a close gesture is intentionally conservative: cancellation, an unreadable snapshot, or evidence of a replacement window ends the request. If a save sheet interrupts the close, resolving the sheet does not revive that earlier intent. The user must make a fresh close-button gesture for another automatic quit attempt.
+The finite sampling after a close gesture is intentionally conservative: cancellation, an unreadable live-window snapshot, or evidence of a replacement window ends the request. If a save sheet interrupts the close, resolving the sheet does not revive that earlier intent. The user must make a fresh close-button gesture for another automatic quit attempt.
 
 ## Platform boundaries
 
