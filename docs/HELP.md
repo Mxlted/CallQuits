@@ -4,11 +4,11 @@
 
 ## macOS blocks the app
 
-Version 0.1.1 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
+Version 0.1.2 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
 
 If macOS instead reports an unverified developer, a damaged app, or another security problem, check that you downloaded the current ZIP from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases) and [verify the archive](#verify-your-download). Download a fresh copy if needed. If the warning persists, report the exact message rather than bypassing it.
 
-Older v0.1.0 downloads and local development builds are ad hoc signed and not notarized. Use the current public release for normal installation. See [Apple's first-launch guidance](https://support.apple.com/en-us/102445) for an explanation of macOS security prompts.
+Older v0.1.0 downloads and default local development builds are ad hoc signed and not notarized. Use the current public release for normal installation. See [Apple's first-launch guidance](https://support.apple.com/en-us/102445) for an explanation of macOS security prompts.
 
 First-launch approval is separate from Accessibility permission. A managed Mac may have additional installation restrictions.
 
@@ -40,7 +40,7 @@ Check these in order:
 5. **No save dialog or replacement window interrupted the close.** Either cancels the attempt, even if you later resolve the dialog.
 6. **No further interaction interrupted confirmation.** A new click or key press cancels the pending attempt.
 
-Development builds include normal-close handling for Discord hiding its main window. This requires one nonminimized Discord window and reliable Accessibility confirmation; extra windows, sheets, replacements, or uncertain state still prevent quitting. It sends a normal quit request and does not require enabling Shift-click force quit. This change is not part of the published v0.1.1 download. See the [validation record](TESTING.md#discord-hide-on-close-development-checks--october-17-2026) for tested behavior and remaining checks.
+Version 0.1.2 includes normal-close handling for Discord hiding its main window. This requires exactly one Discord window, which must not be minimized, and reliable Accessibility confirmation; extra windows, sheets, replacements, or uncertain state still prevent quitting. It sends a normal quit request and does not require enabling Shift-click force quit. This support is scoped to the standard Discord app; other release channels have not been validated. See the [validation record](TESTING.md#discord-hide-on-close-development-checks--october-17-2026) for tested behavior and remaining checks.
 
 Some apps expose incomplete Accessibility information or do not support the window notifications CallQuits needs. A very fast click can close the window before its button can be identified. These cases are skipped rather than guessed. Check **Settings → Activity** for permission changes and quit decisions; unrecognized clicks may not produce an entry.
 
@@ -71,7 +71,7 @@ Download the release ZIP and its `SHA256SUMS.txt` from the **same release** into
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
-The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.1 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
+The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.2 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
 
 ## Remove CallQuits
 

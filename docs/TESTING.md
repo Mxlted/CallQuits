@@ -140,3 +140,14 @@ XCTest covers the scoped identity/transition allowance, release expiry, hidden-b
 Routine validation passed: 63 debug XCTest cases, the release-configuration bundle build with the existing Developer ID identity, strict signature verification, and whitespace checks. The release build needed desktop execution access for `dsymutil`; no source workaround was required. The separately built development app was installed locally, and computer-use inspection showed **Watching close buttons** with Accessibility access retained. The previous notarized app was preserved for rollback; the development build was not submitted for notarization or published.
 
 After installation, the user physically clicked Discord's red close button without Shift and reported that Discord quit normally. Activity recorded **Asked Discord to quit**, and a subsequent read-only process check found no running Discord main application. This is one observed successful normal-close case for the installed Discord 0.0.416 (with Equicord), not a guarantee across Discord versions, release channels, or window arrangements.
+
+
+## v0.1.2 release validation — October 17, 2026
+
+Version 0.1.2, build 3, was built separately from the preserved v0.1.1 artifacts with Developer ID Application signing, hardened runtime, and a secure timestamp. Its binary contains only `arm64`, with a macOS 14 deployment target. All 63 debug XCTest cases passed during final preparation.
+
+Apple accepted notarization submission `d673cd5e-6c4d-4fbe-9e2e-3821d21409cd`; its log reported no issues. Stapling and ticket validation passed. The final `ditto` ZIP was extracted into a fresh directory; executable permissions, strict signature verification, the stapled ticket, and the archive checksum all passed. `syspolicy_check distribution` passed on both the original and extracted app. `spctl` reported Notarized Developer ID with `override=security disabled`; default Gatekeeper enforcement was not established and system security settings were not changed.
+
+The delivered ZIP SHA-256 is `d743f422be4da4481cc9fc239db81112363db5f693014b0554dec1da3b00e602`. The earlier physical Discord test used the preceding development build with the same application source, not this exact versioned archive. The remaining live-matrix, keyboard/notification-delivery, macOS 14/Intel runtime, separate-Mac/account installation/upgrade, and latency limitations above still apply.
+
+The final stapled v0.1.2 app was installed on this Mac. Its installed signature and ticket verified, and computer-use inspection showed version 0.1.2 and **Watching close buttons**, with the existing Accessibility grant retained. This same-Mac check does not establish fresh-install or upgrade behavior on another Mac/account.

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/badge/release-v0.1.1-ef6559?style=flat-square" alt="Release v0.1.1"></a>
+  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/badge/release-v0.1.2-ef6559?style=flat-square" alt="Release v0.1.2"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-303f46?style=flat-square" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/Download-Apple%20silicon-303f46?style=flat-square" alt="Download for Apple silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-303f46?style=flat-square" alt="MIT license"></a>
@@ -42,9 +42,9 @@ On macOS, closing a window often leaves the app running. CallQuits lives in your
 **Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can try a [source build](docs/DEVELOPMENT.md); Intel runtime behavior has not yet been tested.
 
 > [!IMPORTANT]
-> **Early release:** v0.1.1 is **Developer ID signed and notarized by Apple**. Compatibility testing across apps and macOS versions, including runtime checks on macOS 14, is still in progress. See the [release notes](docs/releases/v0.1.1.md) for validation and limitations.
+> **Early release:** v0.1.2 is **Developer ID signed and notarized by Apple**. Compatibility testing across apps and macOS versions, including runtime checks on macOS 14, is still in progress. See the [release notes](docs/releases/v0.1.2.md) for validation and limitations.
 
-1. **[Download CallQuits](https://github.com/Mxlted/CallQuits/releases/latest)** — choose the `CallQuits-0.1.1-macos-arm64.zip` file under **Assets** and open it.
+1. **[Download CallQuits](https://github.com/Mxlted/CallQuits/releases/latest)** — choose the `CallQuits-0.1.2-macos-arm64.zip` file under **Assets** and open it.
 2. **Move CallQuits.app to Applications**, then open it.
 3. **Allow Accessibility access** in System Settings → Privacy & Security → Accessibility. Enable CallQuits, then reopen it if the permission status has not updated.
 4. **Look for the × in a circle in your menu bar.** Open its settings to see CallQuits' status, choose your exceptions, or enable launch at login.
@@ -58,6 +58,7 @@ Accessibility lets CallQuits identify the close button and check an app's window
 | What you do | What CallQuits does |
 | --- | --- |
 | Click the red button on the last window | Lets it close, then requests a normal quit once the window is confirmed gone. |
+| Normally close Discord's sole window (not minimized) | Requests a normal quit after confirming Discord hid the window safely. Shift is not required. |
 | Close one of several windows | Keeps the app running by default. Minimized windows and windows on other Spaces count too. |
 | Cancel a close, encounter a save dialog, or open a replacement window | Cancels the pending automatic quit. |
 | Press ⌘W, use a menu, or hold Option, Command, or Control while clicking | Leaves the app's usual behavior alone. |
