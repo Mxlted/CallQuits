@@ -2,7 +2,7 @@
 
 `swift test` exercises the independent policy with simulated application and window states. `./scripts/build.sh` compiles and signs a real app bundle. Neither proves that Accessibility permission is granted or that a particular app exposes reliable window metadata.
 
-The XCTest suite covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. It does not drive the real Core Graphics event tap or Accessibility observer.
+The XCTest suite in `Tests/CallQuitsCoreTests/` covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. `Tests/CallQuitsTests/` exercises AppModel status mapping and event-tap recovery with simulated settings and monitoring state. Neither suite drives the real Core Graphics event tap or Accessibility observer.
 
 ## Routine validation
 
@@ -93,7 +93,7 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Protected apps such as Finder or CallQuits | Verify policy protection with unit tests; do not terminate actual system apps. |
 | Accessibility denied or revoked | Explain permission status; do not act on uncertain state. |
 | Monitoring unavailable while enabled and Accessibility-trusted | Retry monitoring is available; failed creation/re-enable remains unavailable and exposes permission-recovery help. No endless automatic retries. |
-| Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; resume only after the tap is confirmed enabled and Accessibility trust remains available. A user-disabled tap stays stopped until explicitly retried. |
+| Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; resume only after the tap is confirmed enabled and Accessibility trust remains available. A user-disabled tap stays paused until the user chooses Enable CallQuits. Retry monitoring appears only while enabled, trusted, and unavailable. |
 | Intentional pause or CallQuits disabled | Permission refresh and monitoring retries must not resume capture implicitly. |
 | Unreadable or unsupported AX tree | Skip; never infer zero windows from an error. |
 | App does not support registration for AX window-created notifications | Skip automatic graceful quit. Sheet notifications are optional because snapshots also inspect sheets. |

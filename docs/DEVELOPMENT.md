@@ -44,6 +44,7 @@ Keep the generated project and `project.yml` in sync, then [validate the Xcode r
 | `Sources/CallQuitsCore/` | Deterministic gesture, event identity, protection, and close-decision policy. |
 | `Sources/CallQuits/` | Menu bar UI, settings, Accessibility integration, and event monitoring. |
 | `Tests/CallQuitsCoreTests/` | Policy tests using simulated inputs and window states. |
+| `Tests/CallQuitsTests/` | AppModel status and event-tap recovery tests using simulated settings and monitoring state. |
 | `scripts/fixtures/` | Disposable app for live integration checks. |
 | `Resources/` | App metadata and checked-in icon assets. |
 
