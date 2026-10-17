@@ -7,3 +7,24 @@ xcuserdata/
 .swiftpm/
 *.dmg
 *.zip
+
+# Local configuration and caches
+.cache/
+.vscode/
+.idea/
+.agents/
+.codex/
+.aws/
+*.xcarchive/
+*.xcconfig.local
+
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.key
+*.pem
+*.mobileprovision
+*.provisionprofile
