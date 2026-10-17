@@ -1,3 +1,4 @@
+import AppKit
 import ServiceManagement
 import XCTest
 @testable import CallQuits
@@ -124,5 +125,25 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(recovery.shouldRetry(enabled: true, trusted: true), "repeated timeout")
         recovery = TapRecovery()
         XCTAssertTrue(recovery.shouldRetry(enabled: true, trusted: true), "a new tap resets recovery")
+    }
+
+    func testSecondaryAndAuxiliaryPressesSubscribeAndCancelWithoutBecomingCloseGestures() {
+        for type in [CGEventType.keyDown, .rightMouseDown, .otherMouseDown] {
+            XCTAssertNotEqual(CloseMonitorInput.eventMask & (CGEventMask(1) << type.rawValue), 0,
+                              "the native tap must receive interruption \(type)")
+            XCTAssertTrue(CloseMonitorInput.interrupts(type), "must cancel before gesture/AX routing")
+        }
+        for mask in [NSEvent.EventTypeMask.keyDown, .rightMouseDown, .otherMouseDown, .leftMouseDown] {
+            XCTAssertTrue(CloseMonitorInput.localMask.contains(mask), "interaction with CallQuits also cancels")
+        }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged] {
+            XCTAssertNotEqual(CloseMonitorInput.eventMask & (CGEventMask(1) << type.rawValue), 0)
+            XCTAssertFalse(CloseMonitorInput.interrupts(type), "native left gesture keeps its own validation")
+        }
+        for type in [CGEventType.mouseMoved, .flagsChanged, .rightMouseUp, .otherMouseUp] {
+            XCTAssertEqual(CloseMonitorInput.eventMask & (CGEventMask(1) << type.rawValue), 0,
+                           "do not introduce extra input collection")
+            XCTAssertFalse(CloseMonitorInput.interrupts(type))
+        }
     }
 }

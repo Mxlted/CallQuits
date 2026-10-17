@@ -15,6 +15,17 @@ struct TapRecovery {
     }
 }
 
+/// Keep cancellation routing and subscription in sync. Secondary and auxiliary mouse presses
+/// supersede a pending close just like typing; they can never start a close-button gesture.
+enum CloseMonitorInput {
+    private static let interruptions: [CGEventType] = [.keyDown, .rightMouseDown, .otherMouseDown]
+    static let eventMask = ([CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged] + interruptions)
+        .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
+    static let localMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+
+    static func interrupts(_ type: CGEventType) -> Bool { interruptions.contains(type) }
+}
+
 /// Observes clicks; never swallows, rewrites, or synthesizes a user's input.
 @MainActor
 final class CloseMonitor {
@@ -28,9 +39,9 @@ final class CloseMonitor {
     private var generation: UInt64 = 0
     private var gesture: CloseGesture?
     private var pressIdentity: EventIdentity?
-    private var pressApplication: NSRunningApplication?
     private var releasePending = false
-    private var hiddenCloseIntent: HiddenCloseIntent?
+    private var applicationVisibility: CloseApplicationVisibility?
+    private var attemptApplication: NSRunningApplication?
     private var verifiedCloseApplication: NSRunningApplication?
     private var awaitingHide: (() -> Void)?
     private var windowObservation: CloseWindowObservation?
@@ -59,7 +70,7 @@ final class CloseMonitor {
                                                      object: nil, queue: .main) { [weak self] notification in
             MainActor.assumeIsolated {
                 guard let self, let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                      self.allowsHiddenClose(app) else { return }
+                      self.applicationVisibility?.owns(processID: app.processIdentifier) == true else { return }
                 if let verified = self.verifiedCloseApplication { self.cancelClose(verified, reason: .windowSetChanged) }
                 else { self.invalidate() }
             }
@@ -94,12 +105,10 @@ final class CloseMonitor {
             model.setMonitoringState(model.enabled ? .permissionNeeded : .paused)
             return
         }
-        let mask = [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged, .keyDown]
-            .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         // AppKit's reconstructed CGEvent can identify the observing app as its recipient.
         // Read the original annotated mouse event instead. A listen-only tap cannot modify input.
         eventMonitor = CGEvent.tapCreate(tap: .cgAnnotatedSessionEventTap, place: .tailAppendEventTap,
-                                        options: .listenOnly, eventsOfInterest: mask, callback: { _, type, event, context in
+                                        options: .listenOnly, eventsOfInterest: CloseMonitorInput.eventMask, callback: { _, type, event, context in
             guard let context else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<CloseMonitor>.fromOpaque(context).takeUnretainedValue()
             MainActor.assumeIsolated {
@@ -108,9 +117,9 @@ final class CloseMonitor {
                     monitor.model.record("macOS paused click monitoring. Enable CallQuits to resume.")
                 } else if type == .tapDisabledByTimeout {
                     monitor.resumeAfterTimeout()
-                } else if type == .keyDown {
-                    // Only the existence of an intervening key press matters. Never inspect
-                    // its keycode, characters, or recipient; idle typing does no work.
+                } else if CloseMonitorInput.interrupts(type) {
+                    // Only the existence of an intervening press matters. Never inspect
+                    // its contents or recipient; idle typing and secondary clicks do no work.
                     if monitor.gesture != nil || monitor.releasePending || monitor.verifiedCloseApplication != nil {
                         monitor.invalidate()
                     }
@@ -129,8 +138,8 @@ final class CloseMonitor {
             monitoringFailed()
             return
         }
-        // Local keyboard interaction also cancels pending work without observing other apps' typing.
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+        // Local interaction also cancels pending work, including secondary/auxiliary presses.
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: CloseMonitorInput.localMask) { [weak self] event in
             MainActor.assumeIsolated { self?.invalidate() }
             return event
         }
@@ -170,9 +179,9 @@ final class CloseMonitor {
         generation &+= 1
         gesture = nil
         pressIdentity = nil
-        pressApplication = nil
         releasePending = false
-        hiddenCloseIntent = nil
+        applicationVisibility = nil
+        attemptApplication = nil
         verifiedCloseApplication = nil
         awaitingHide = nil
         windowObservation?.stop()
@@ -181,24 +190,27 @@ final class CloseMonitor {
     }
 
     private func applicationDidHide(_ notification: Notification) {
-        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-           hiddenCloseIntent?.recordHide(processID: app.processIdentifier,
-                                         at: ProcessInfo.processInfo.systemUptime) == true {
+        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        switch applicationVisibility?.applicationDidHide(processID: app?.processIdentifier,
+                                                         at: ProcessInfo.processInfo.systemUptime) {
+        case .preserveMatchedRelease:
             // Native release has matched, but a positive AX hit is still mandatory. Keeping
             // this evidence lets a hide notification arrive before the worker's hit callback.
             let resume = awaitingHide
             awaitingHide = nil
             resume?()
-            return
+        case .cancel:
+            if let app = verifiedCloseApplication { cancelClose(app, reason: .applicationHidden) }
+            else { invalidate() }
+        case .unrelated, nil:
+            break
         }
-        if let app = verifiedCloseApplication { cancelClose(app, reason: .applicationHidden) }
-        else { invalidate() }
     }
 
     private func allowsHiddenClose(_ app: NSRunningApplication) -> Bool {
-        hiddenCloseIntent?.allowsHiddenState(processID: app.processIdentifier,
-                                             bundleIdentifier: app.bundleIdentifier,
-                                             at: ProcessInfo.processInfo.systemUptime) == true
+        applicationVisibility?.allowsHiddenState(processID: app.processIdentifier,
+                                                  bundleIdentifier: app.bundleIdentifier,
+                                                  at: ProcessInfo.processInfo.systemUptime) == true
     }
 
     private func handle(_ type: CGEventType, event: CGEvent) {
@@ -219,10 +231,11 @@ final class CloseMonitor {
                   let app = NSRunningApplication(processIdentifier: identity.processID),
                   isEligible(app) else { return }
             pressIdentity = identity
-            pressApplication = app
             gesture = CloseGesture(x: point.x, y: point.y, timestamp: timestamp,
                                    targetProcessID: identity.processID, modifiers: intent)
             guard gesture != nil else { return }
+            applicationVisibility = CloseApplicationVisibility(identity: identity, bundleIdentifier: app.bundleIdentifier)
+            attemptApplication = app
             worker.mouseDown(point: point, eventTime: timestamp, targetPID: identity.processID, generation: generation)
         case .leftMouseDragged:
             if let gesture, !gesture.allowsDrag(toX: point.x, y: point.y) { invalidate() }
@@ -236,16 +249,13 @@ final class CloseMonitor {
             gesture = nil
             pressIdentity = nil
             let force = action == .force
-            if !force, let app = pressApplication {
-                hiddenCloseIntent = HiddenCloseIntent(processID: app.processIdentifier,
-                                                     bundleIdentifier: app.bundleIdentifier, releasedAt: timestamp)
-            }
-            pressApplication = nil
+            applicationVisibility?.recordMatchedRelease(at: timestamp, permitsHiddenClose: !force)
             let token = generation
             let validUntil = timestamp + (force ? 0.8 : CloseSession.maximumDuration)
             releasePending = true
             worker.mouseUp(point: point, eventTime: timestamp, generation: token) { [weak self] hit in
                 guard let self, token == self.generation else { return }
+                guard self.matchesAttemptApplication(hit.application) else { self.invalidate(); return }
                 self.releasePending = false
                 self.verifiedCloseApplication = hit.application
                 // macOS can update isHidden before delivering didHide. Wait for that exact
@@ -268,6 +278,7 @@ final class CloseMonitor {
 
     private func confirmVerifiedClose(hit: AccessibilityClient.Hit, force: Bool, token: UInt64, validUntil: TimeInterval) {
         guard token == generation else { return }
+        guard matchesAttemptApplication(hit.application) else { invalidate(); return }
         guard ProcessInfo.processInfo.systemUptime < validUntil else {
             cancelClose(hit.application, reason: .expired)
             return
@@ -336,6 +347,14 @@ final class CloseMonitor {
                                  allowsVerifiedHiddenClose: allowsVerifiedHiddenClose)
     }
 
+    private func matchesAttemptApplication(_ app: NSRunningApplication) -> Bool {
+        // AppKit recommends object equality for process identity. Also pin the native PID:
+        // automatic termination can change the PID represented by a retained application.
+        guard let attemptApplication, app == attemptApplication else { return false }
+        return applicationVisibility?.matchesApplication(processID: app.processIdentifier,
+                                                          bundleIdentifier: app.bundleIdentifier) == true
+    }
+
     private func cancelClose(_ app: NSRunningApplication, reason: CloseCancellationReason) {
         model.record("Skipped quit for \(app.localizedName ?? "the app"): \(reason.activityExplanation).")
         invalidate()
@@ -344,6 +363,7 @@ final class CloseMonitor {
     private func requestQuit(_ app: NSRunningApplication, force: Bool, generation token: UInt64,
                              validUntil: TimeInterval, confirmedHidden: Bool = false) {
         guard token == generation else { return }
+        guard matchesAttemptApplication(app) else { invalidate(); return }
         guard ProcessInfo.processInfo.systemUptime < validUntil else {
             cancelClose(app, reason: .expired)
             return

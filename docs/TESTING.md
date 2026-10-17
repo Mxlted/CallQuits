@@ -4,6 +4,8 @@
 
 The XCTest suite in `Tests/CallQuitsCoreTests/` covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. `Tests/CallQuitsTests/` exercises AppModel status mapping and event-tap recovery with simulated settings and monitoring state, plus Accessibility capture and snapshot recovery through injected hit testing and attribute readers. Neither suite drives the real Core Graphics event tap or Accessibility observer.
 
+The [October 17 lifecycle and compatibility investigation](INVESTIGATION-2026-10-17.md) records the broader audit, native fixture observations, focused fixes, validation results, and unresolved limits. Its regression additions cover target-scoped visibility changes, pinned application identity, and secondary/auxiliary press cancellation.
+
 ## Routine validation
 
 Run from the repository root before delivery:
@@ -90,8 +92,12 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | A new window appears briefly between snapshots | A supported window-created notification cancels the pending normal quit. |
 | Switch mode, pause, revoke permission, or exclude fixture while a decision is pending | Old intent cannot terminate the fixture. |
 | Press a key while a close is pending, including Cancel/Escape or Hide shortcuts | Cancel the attempt without reading or recording the key. A later app hide must not revive it. |
+| Right-click or press an auxiliary mouse button during a pending close, including inside CallQuits | Cancel the old attempt; these presses must never qualify as close-button intent. |
+| A separate disposable app hides itself while the target's close is pending | Ignore the unrelated hide; hiding/unhiding the target still invalidates intent except for the existing qualified hide-on-close path. |
+| Target process exits or automatically relaunches during a pending decision | The old application's object, native PID, and bundle identity must still match at both termination paths; a new process cannot inherit the old attempt. |
 | Enable any-window mode and close one of two clean windows | Graceful quit is requested after the clicked window closes. |
 | Any-window mode with another unsaved document | The target app's ordinary quit/save behavior remains authoritative. |
+| Close one native window tab while another tab remains | A newly exposed tab identity currently cancels as a replacement, including in any-window mode; do not relax replacement protection to force a quit. |
 | Enable Shift-click force quit after warning; Shift-click a verified red button | Explicit force quit may discard all fixture state, even with other windows. |
 | Exclude fixture; repeat ordinary and enabled Shift-click | Neither path terminates it. |
 | Protected apps such as Finder or CallQuits | Verify policy protection with unit tests; do not terminate actual system apps. |

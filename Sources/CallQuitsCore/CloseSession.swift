@@ -48,6 +48,61 @@ public struct HiddenCloseIntent: Sendable {
     }
 }
 
+/// Routes application visibility changes for the whole lifetime of one native-identified press.
+/// Ownership must survive mouse-up while Accessibility capture is still pending. Notifications
+/// about another application are unrelated to this attempt, even before its close control is read.
+public struct CloseApplicationVisibility: Sendable {
+    public enum HideDecision: Equatable, Sendable {
+        case unrelated
+        case cancel
+        case preserveMatchedRelease
+    }
+
+    private let processID: Int32
+    private let bundleIdentifier: String?
+    private var releaseRecorded = false
+    private var hiddenCloseIntent: HiddenCloseIntent?
+
+    public init(identity: EventIdentity, bundleIdentifier: String?) {
+        processID = identity.processID
+        self.bundleIdentifier = bundleIdentifier
+    }
+
+    /// Called only after the release matches the original native identity and gesture.
+    /// This records visibility evidence; positive AX close-button proof is still mandatory.
+    public mutating func recordMatchedRelease(at timestamp: TimeInterval, permitsHiddenClose: Bool) {
+        guard !releaseRecorded else { return }
+        releaseRecorded = true
+        if permitsHiddenClose {
+            hiddenCloseIntent = HiddenCloseIntent(processID: processID, bundleIdentifier: bundleIdentifier,
+                                                 releasedAt: timestamp)
+        }
+    }
+
+    public func owns(processID: Int32?) -> Bool {
+        processID == self.processID
+    }
+
+    /// A retained NSRunningApplication can describe a relaunched process after automatic
+    /// termination. A fresh process must never inherit the old press or Accessibility snapshot.
+    public func matchesApplication(processID: Int32, bundleIdentifier: String?) -> Bool {
+        owns(processID: processID) && bundleIdentifier == self.bundleIdentifier
+    }
+
+    public mutating func applicationDidHide(processID: Int32?, at timestamp: TimeInterval) -> HideDecision {
+        guard owns(processID: processID) else { return .unrelated }
+        if hiddenCloseIntent?.recordHide(processID: self.processID, at: timestamp) == true {
+            return .preserveMatchedRelease
+        }
+        return .cancel
+    }
+
+    public func allowsHiddenState(processID: Int32, bundleIdentifier: String?, at timestamp: TimeInterval) -> Bool {
+        hiddenCloseIntent?.allowsHiddenState(processID: processID, bundleIdentifier: bundleIdentifier,
+                                             at: timestamp) == true
+    }
+}
+
 /// A complete Accessibility snapshot of an application, including minimized windows and other Spaces.
 ///
 /// The caller must mark partially read snapshots unreliable and compare window identities against

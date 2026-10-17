@@ -326,4 +326,56 @@ final class CloseSessionTests: XCTestCase {
             XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: time))
         }
     }
+
+    private func visibility(_ bundle: String = "example.fixture") -> CloseApplicationVisibility {
+        let identity = EventIdentity(nativeProcessID: 42, eventWindowID: 100, windowOwnerProcessID: 42)!
+        return CloseApplicationVisibility(identity: identity, bundleIdentifier: bundle)
+    }
+
+    func testUnrelatedHidesCannotCancelThePressOrPendingRelease() {
+        for bundle in ["example.fixture", "com.hnc.Discord"] {
+            for released in [false, true] {
+                var attempt = visibility(bundle)
+                if released { attempt.recordMatchedRelease(at: 10, permitsHiddenClose: true) }
+                for unrelatedPID: Int32? in [nil, 0, 1, 43] {
+                    XCTAssertEqual(attempt.applicationDidHide(processID: unrelatedPID, at: 10.1), .unrelated,
+                                   "bundle=\(bundle), released=\(released), notification PID=\(String(describing: unrelatedPID))")
+                }
+                XCTAssertFalse(attempt.allowsHiddenState(processID: 42, bundleIdentifier: bundle, at: 10.2),
+                               "another app's transition cannot authorize hidden state")
+                XCTAssertEqual(attempt.applicationDidHide(processID: 42, at: 10.2),
+                               bundle == "com.hnc.Discord" && released ? .preserveMatchedRelease : .cancel)
+            }
+        }
+    }
+
+    func testTargetHideStillCancelsUnreleasedUnsupportedAndForceAttempts() {
+        var beforeRelease = visibility("com.hnc.Discord")
+        XCTAssertEqual(beforeRelease.applicationDidHide(processID: 42, at: 10.1), .cancel)
+        var ordinary = visibility()
+        ordinary.recordMatchedRelease(at: 10, permitsHiddenClose: true)
+        XCTAssertEqual(ordinary.applicationDidHide(processID: 42, at: 10.1), .cancel)
+        var force = visibility("com.hnc.Discord")
+        force.recordMatchedRelease(at: 10, permitsHiddenClose: false)
+        XCTAssertEqual(force.applicationDidHide(processID: 42, at: 10.1), .cancel)
+        XCTAssertFalse(force.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.2))
+    }
+
+    func testVisibilityEvidenceRetainsOriginalDeadlineAndExactApplicationIdentity() {
+        var attempt = visibility("com.hnc.Discord")
+        attempt.recordMatchedRelease(at: 10, permitsHiddenClose: true)
+        XCTAssertEqual(attempt.applicationDidHide(processID: 42, at: 10.1), .preserveMatchedRelease)
+        attempt.recordMatchedRelease(at: 12, permitsHiddenClose: true)
+        XCTAssertEqual(attempt.applicationDidHide(processID: 43, at: 12.8), .unrelated)
+        XCTAssertTrue(attempt.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 12.9))
+        XCTAssertEqual(attempt.applicationDidHide(processID: 42, at: 13), .cancel)
+        XCTAssertFalse(attempt.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 13))
+
+        XCTAssertTrue(attempt.matchesApplication(processID: 42, bundleIdentifier: "com.hnc.Discord"))
+        XCTAssertFalse(attempt.matchesApplication(processID: 43, bundleIdentifier: "com.hnc.Discord"),
+                       "a relaunched process must not inherit the old click or snapshot")
+        XCTAssertFalse(attempt.matchesApplication(processID: 42, bundleIdentifier: "example.fixture"),
+                       "a different application reusing a PID must not inherit the old click")
+        XCTAssertFalse(attempt.matchesApplication(processID: 42, bundleIdentifier: nil))
+    }
 }
