@@ -1,0 +1,27 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: swift --version
+      - name: Test safety policy
+        run: swift test
+      - name: Build app bundle
+        run: ./scripts/build.sh
+      - name: Check whitespace
+        run: git diff --check
+      - name: Package app with executable permissions
+        run: ditto -c -k --sequesterRsrc --keepParent build/CallQuits.app build/CallQuits.zip
+      - name: Upload local build
+        uses: actions/upload-artifact@v4
+        with:
+          name: CallQuits-local-build
+          path: build/CallQuits.zip
+          if-no-files-found: error

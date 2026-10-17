@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a close button, permission, or settings problem.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include what you expected and steps to reproduce. Avoid private document names or contents.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: macOS, CallQuits version, and affected application
+      placeholder: macOS 14.7; CallQuits 0.1.0; TextEdit
+    validations:
+      required: true
+  - type: textarea
+    id: conditions
+    attributes:
+      label: Window and permission details
+      description: Number of windows, minimized windows, Spaces, save dialogs, modifiers, exclusions, and Accessibility permission status.

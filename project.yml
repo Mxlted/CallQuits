@@ -1,0 +1,41 @@
+name: CallQuits
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: NO
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_APP_SANDBOX: NO
+targets:
+  CallQuits:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/CallQuits
+      - path: Sources/CallQuitsCore
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.callquits.CallQuits
+        PRODUCT_NAME: CallQuits
+        INFOPLIST_FILE: Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+schemes:
+  CallQuits:
+    build:
+      targets:
+        CallQuits: all
+    run:
+      config: Debug
+    archive:
+      config: Release
