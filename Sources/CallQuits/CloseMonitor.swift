@@ -4,6 +4,17 @@ import ApplicationServices
 import CallQuitsCore
 #endif
 
+/// A timeout gets one automatic recovery attempt per tap. Further failures require user action.
+struct TapRecovery {
+    private var attempted = false
+
+    mutating func shouldRetry(enabled: Bool, trusted: Bool) -> Bool {
+        guard enabled, trusted, !attempted else { return false }
+        attempted = true
+        return true
+    }
+}
+
 /// Observes clicks; never swallows, rewrites, or synthesizes a user's input.
 @MainActor
 final class CloseMonitor {
@@ -18,12 +29,14 @@ final class CloseMonitor {
     private var gesture: CloseGesture?
     private var pressIdentity: EventIdentity?
     private var windowObservation: CloseWindowObservation?
+    private var tapRecovery = TapRecovery()
 
     init(model: AppModel) { self.model = model }
 
     func start() {
         guard permissionTimer == nil else { return }
         model.onConfigurationChange = { [weak self] in self?.reconfigure() }
+        model.onMonitoringRetry = { [weak self] in self?.reconfigure() }
         let center = NSWorkspace.shared.notificationCenter
         for notification in [NSWorkspace.willSleepNotification,
                              NSWorkspace.screensDidSleepNotification,
@@ -37,12 +50,7 @@ final class CloseMonitor {
         // Only checks our permission bit, never enumerates other apps or windows when idle.
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                let granted = AXIsProcessTrusted()
-                if self.model.accessibilityGranted != granted {
-                    self.model.accessibilityGranted = granted
-                    self.reconfigure()
-                }
+                self?.model.refreshPermission()
             }
         }
         model.refreshPermission()
@@ -57,15 +65,16 @@ final class CloseMonitor {
         workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         workspaceObservers.removeAll()
         model.onConfigurationChange = nil
-        model.monitorRunning = false
+        model.onMonitoringRetry = nil
+        model.setMonitoringState(.paused)
     }
 
     private func reconfigure() {
         invalidate()
         removeMonitors()
+        tapRecovery = TapRecovery()
         guard model.enabled, model.accessibilityGranted else {
-            model.monitorRunning = false
-            model.statusMessage = model.enabled ? "Accessibility access needed" : "Paused"
+            model.setMonitoringState(model.enabled ? .permissionNeeded : .paused)
             return
         }
         let mask = [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged]
@@ -81,10 +90,7 @@ final class CloseMonitor {
                     monitor.model.enabled = false
                     monitor.model.record("macOS paused click monitoring. Enable CallQuits to resume.")
                 } else if type == .tapDisabledByTimeout {
-                    monitor.invalidate()
-                    if let tap = monitor.eventMonitor, monitor.model.enabled, AXIsProcessTrusted() {
-                        CGEvent.tapEnable(tap: tap, enable: true)
-                    }
+                    monitor.resumeAfterTimeout()
                 } else { monitor.handle(type, event: event) }
             }
             return Unmanaged.passUnretained(event)
@@ -96,13 +102,36 @@ final class CloseMonitor {
                 CGEvent.tapEnable(tap: eventMonitor, enable: true)
             }
         }
+        guard let eventMonitor, eventSource != nil, CGEvent.tapIsEnabled(tap: eventMonitor) else {
+            monitoringFailed()
+            return
+        }
         // Local keyboard interaction also cancels pending work without observing other apps' typing.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
             MainActor.assumeIsolated { self?.invalidate() }
             return event
         }
-        model.monitorRunning = eventMonitor != nil && eventSource != nil
-        model.statusMessage = model.monitorRunning ? "Ready for your next close" : "Couldn’t start click monitoring"
+        model.setMonitoringState(.running)
+    }
+
+    private func resumeAfterTimeout() {
+        invalidate()
+        model.refreshPermission()
+        guard model.enabled, model.accessibilityGranted else { return }
+        guard let tap = eventMonitor,
+              tapRecovery.shouldRetry(enabled: model.enabled, trusted: model.accessibilityGranted) else {
+            monitoringFailed()
+            return
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else { monitoringFailed(); return }
+        model.setMonitoringState(.running)
+    }
+
+    private func monitoringFailed() {
+        invalidate()
+        removeMonitors()
+        model.setMonitoringState(.unavailable)
     }
 
     private func removeMonitors() {
@@ -164,28 +193,32 @@ final class CloseMonitor {
                 if force {
                     self.requestQuit(hit.application, force: true, generation: token, validUntil: validUntil)
                 } else {
-                    self.worker.prepareObservation(hit: hit, generation: token, onChange: { [weak self] in
+                    self.worker.prepareObservation(hit: hit, generation: token, onChange: { [weak self] reason in
                         guard let self, self.generation == token else { return }
-                        self.invalidate()
+                        self.cancelClose(hit.application, reason: reason)
                     }) { [weak self] observation in
-                        guard let self, self.generation == token,
-                              ProcessInfo.processInfo.systemUptime < validUntil else { return }
+                        guard let self, self.generation == token else { return }
+                        guard ProcessInfo.processInfo.systemUptime < validUntil else {
+                            self.cancelClose(hit.application, reason: .expired)
+                            return
+                        }
                         guard let observation else {
-                            self.model.record("Kept \(hit.application.localizedName ?? "the app") open: window observation is unavailable.")
+                            self.model.record("Skipped quit for \(hit.application.localizedName ?? "the app"): window observation is unavailable.")
                             self.invalidate()
                             return
                         }
                         self.windowObservation = observation
                         observation.start()
-                        self.worker.confirm(hit: hit, behavior: self.model.behavior, generation: token) { [weak self] shouldQuit, checkedAt in
+                        self.worker.confirm(hit: hit, behavior: self.model.behavior, generation: token) { [weak self] decision, checkedAt in
                             guard let self, self.generation == token else { return }
-                            if shouldQuit {
+                            switch decision {
+                            case .quit:
                                 // Even a fresh click must not use an old snapshot after the UI queue stalls.
                                 self.requestQuit(hit.application, force: false, generation: token,
                                                  validUntil: min(validUntil, checkedAt + 0.25))
-                            } else {
-                                self.model.record("Kept \(hit.application.localizedName ?? "the app") open: another window, dialog, or uncertain close.")
-                                self.invalidate()
+                            case .cancel(let reason):
+                                self.cancelClose(hit.application, reason: reason)
+                            case .wait: break
                             }
                         }
                     }
@@ -216,15 +249,38 @@ final class CloseMonitor {
                                  isExcluded: app.bundleIdentifier.map { model.isExcluded($0) } ?? true)
     }
 
+    private func cancelClose(_ app: NSRunningApplication, reason: CloseCancellationReason) {
+        model.record("Skipped quit for \(app.localizedName ?? "the app"): \(reason.activityExplanation).")
+        invalidate()
+    }
+
     private func requestQuit(_ app: NSRunningApplication, force: Bool, generation token: UInt64, validUntil: TimeInterval) {
         guard token == generation else { return }
-        guard ProcessInfo.processInfo.systemUptime < validUntil,
-              isEligible(app), !force || model.forceQuitEnabled else { invalidate(); return }
+        guard ProcessInfo.processInfo.systemUptime < validUntil else {
+            cancelClose(app, reason: .expired)
+            return
+        }
+        guard isEligible(app), !force || model.forceQuitEnabled else { invalidate(); return }
         invalidate() // One request per click. A rejected/canceled graceful quit is never retried.
         let name = app.localizedName ?? "Application"
         let sent = force ? app.forceTerminate() : app.terminate()
         model.record(sent ? (force ? "Requested force quit for \(name)." : "Asked \(name) to quit.")
                           : "\(name) did not accept the quit request.")
+    }
+}
+
+extension CloseCancellationReason {
+    var activityExplanation: String {
+        switch self {
+        case .remainingWindows: "other windows remain"
+        case .blockingUI: "a sheet or modal dialog was observed"
+        case .replacementWindow: "a new or replacement window was observed"
+        case .unreliableSnapshot: "Accessibility could not reliably confirm the window state"
+        case .windowSetChanged: "the window set changed during confirmation"
+        case .expired: "the close attempt expired before it could be confirmed"
+        case .invalidTiming: "the close timing could not be verified"
+        case .alreadyFinished: "the close attempt had already finished"
+        }
     }
 }
 
@@ -261,7 +317,7 @@ private final class CloseWorker {
     }
 
     func confirm(hit: AccessibilityClient.Hit, behavior: CloseBehavior, generation: UInt64,
-                 completion: @escaping @MainActor (Bool, TimeInterval) -> Void) {
+                 completion: @escaping @MainActor (CloseDecision, TimeInterval) -> Void) {
         queue.async {
             guard self.generation == generation else { return }
             let session = CloseSession(behavior: behavior, startedAt: ProcessInfo.processInfo.systemUptime)
@@ -270,7 +326,7 @@ private final class CloseWorker {
     }
 
     func prepareObservation(hit: AccessibilityClient.Hit, generation: UInt64,
-                            onChange: @escaping @MainActor () -> Void,
+                            onChange: @escaping @MainActor (CloseCancellationReason) -> Void,
                             completion: @escaping @MainActor (CloseWindowObservation?) -> Void) {
         queue.async {
             guard self.generation == generation else { return }
@@ -280,16 +336,15 @@ private final class CloseWorker {
     }
 
     private func poll(hit: AccessibilityClient.Hit, session: CloseSession, generation: UInt64,
-                      completion: @escaping @MainActor (Bool, TimeInterval) -> Void) {
+                      completion: @escaping @MainActor (CloseDecision, TimeInterval) -> Void) {
         guard self.generation == generation else { return }
         var session = session
         let snapshot = client.snapshot(for: hit)
         let checkedAt = ProcessInfo.processInfo.systemUptime
-        switch session.evaluate(snapshot: snapshot, now: checkedAt) {
-        case .quit:
-            DispatchQueue.main.async { completion(true, checkedAt) }
-        case .cancel:
-            DispatchQueue.main.async { completion(false, checkedAt) }
+        let decision = session.evaluate(snapshot: snapshot, now: checkedAt)
+        switch decision {
+        case .quit, .cancel:
+            DispatchQueue.main.async { completion(decision, checkedAt) }
         case .wait:
             // Schedule from completion, so slow AX reads never build up a backlog of overdue polls.
             queue.asyncAfter(deadline: .now() + 0.1) {
@@ -303,19 +358,21 @@ private final class CloseWorker {
 /// Registration is worker-only; source activation and removal are main-thread-only.
 private final class CloseWindowObservation {
     private final class Relay {
-        let onChange: @MainActor () -> Void
-        init(_ onChange: @escaping @MainActor () -> Void) { self.onChange = onChange }
+        let onChange: @MainActor (CloseCancellationReason) -> Void
+        init(_ onChange: @escaping @MainActor (CloseCancellationReason) -> Void) { self.onChange = onChange }
     }
     private let observer: AXObserver
     private let relay: Relay
 
-    init?(hit: AccessibilityClient.Hit, onChange: @escaping @MainActor () -> Void) {
+    init?(hit: AccessibilityClient.Hit, onChange: @escaping @MainActor (CloseCancellationReason) -> Void) {
         relay = Relay(onChange)
         var result: AXObserver?
-        let error = AXObserverCreate(hit.application.processIdentifier, { _, _, _, context in
+        let error = AXObserverCreate(hit.application.processIdentifier, { _, _, notification, context in
             guard let context else { return }
             let relay = Unmanaged<Relay>.fromOpaque(context).takeUnretainedValue()
-            MainActor.assumeIsolated { relay.onChange() }
+            let reason: CloseCancellationReason = notification as String == kAXSheetCreatedNotification
+                ? .blockingUI : .replacementWindow
+            MainActor.assumeIsolated { relay.onChange(reason) }
         }, &result)
         guard error == .success, let result else { return nil }
         observer = result

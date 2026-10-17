@@ -14,6 +14,8 @@ struct CallQuitsApp: App {
             Toggle("Enable CallQuits", isOn: $model.enabled)
             if !model.accessibilityGranted {
                 Button("Allow Accessibility…") { model.requestAccessibility() }
+            } else if model.canRetryMonitoring {
+                Button("Retry monitoring") { model.retryMonitoring() }
             }
             Button("Settings…") { appDelegate.showSettings() }
                 .keyboardShortcut(",")
@@ -22,7 +24,7 @@ struct CallQuitsApp: App {
                 .keyboardShortcut("q")
         } label: {
             Image(systemName: model.monitorRunning ? "xmark.circle.fill" : "xmark.circle")
-                .accessibilityLabel(model.monitorRunning ? "CallQuits is active" : "CallQuits is paused")
+                .accessibilityLabel("CallQuits: \(model.statusMessage)")
         }
         .menuBarExtraStyle(.menu)
     }
@@ -37,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         model.refreshPermission()
+        model.refreshLoginStatus()
         monitor = CloseMonitor(model: model)
         monitor?.start()
 
@@ -47,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         model.refreshPermission()
+        model.refreshLoginStatus()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -80,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settingsWindow = window
         }
         model.refreshPermission()
+        model.refreshLoginStatus()
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

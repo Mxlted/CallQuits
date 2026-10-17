@@ -29,6 +29,7 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var pane: SettingsPane = .behavior
     @State private var showForceWarning = false
+    @State private var showPermissionHelp = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -51,7 +52,16 @@ struct SettingsView: View {
         }
         .frame(minWidth: 780, minHeight: 600)
         .tint(Style.mint)
-        .onAppear { model.refreshPermission() }
+        .onAppear {
+            model.refreshPermission()
+            model.refreshLoginStatus()
+        }
+        .alert("Restore Accessibility access", isPresented: $showPermissionHelp) {
+            Button("Open Accessibility Settings") { model.openAccessibilitySettings() }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Keep CallQuits in Applications. After replacing or rebuilding the app, macOS may retain a stale Accessibility entry. Quit CallQuits, remove its old entry in System Settings → Privacy & Security → Accessibility, add the current copy from Applications, enable it, and relaunch. Toggling the old entry alone may not restore access.")
+        }
         .alert("Enable Shift-click force quit?", isPresented: $showForceWarning) {
             Button("Enable Force Quit", role: .destructive) { model.forceQuitEnabled = true }
             Button("Cancel", role: .cancel) {}
@@ -167,6 +177,7 @@ struct SettingsView: View {
         .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Style.mint.opacity(0.12)))
 
         if !model.accessibilityGranted { permissionCard }
+        if model.canRetryMonitoring { monitoringRecoveryCard }
 
         SettingsCard {
             SettingRow(symbol: "power", title: "Enable CallQuits", detail: model.statusMessage) {
@@ -242,12 +253,36 @@ struct SettingsView: View {
                 }
                 .controlSize(.small)
                 .padding(.top, 3)
+                Button("Permission recovery help") { showPermissionHelp = true }
+                    .buttonStyle(.link)
+                    .controlSize(.small)
             }
             Spacer(minLength: 0)
         }
         .padding(16)
         .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(0.14)))
+    }
+
+    private var monitoringRecoveryCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Click monitoring is unavailable", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Accessibility is allowed, but macOS hasn’t enabled the click monitor. Retry once you’re ready. If it still fails, refresh the permission entry for this copy of CallQuits.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Retry monitoring") { model.retryMonitoring() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Permission recovery help") { showPermissionHelp = true }
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+            }
+            .padding(16)
+        }
     }
 
     @ViewBuilder

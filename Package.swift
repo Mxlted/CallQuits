@@ -11,6 +11,7 @@ let package = Package(
     targets: [
         .target(name: "CallQuitsCore"),
         .executableTarget(name: "CallQuits", dependencies: ["CallQuitsCore"]),
-        .testTarget(name: "CallQuitsCoreTests", dependencies: ["CallQuitsCore"])
+        .testTarget(name: "CallQuitsCoreTests", dependencies: ["CallQuitsCore"]),
+        .testTarget(name: "CallQuitsTests", dependencies: ["CallQuits"])
     ]
 )

@@ -1,0 +1,128 @@
+import ServiceManagement
+import XCTest
+@testable import CallQuits
+
+final class AppModelTests: XCTestCase {
+    @MainActor
+    private func makeModel(
+        readAccessibility: @escaping () -> Bool = { true },
+        readLoginStatus: @escaping () -> SMAppService.Status = { .notRegistered }
+    ) -> AppModel {
+        let suite = "CallQuitsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return AppModel(defaults: defaults, readAccessibility: readAccessibility, readLoginStatus: readLoginStatus)
+    }
+
+    @MainActor
+    func testLoginRefreshReplacesApprovalAndErrorMessagesForEveryStatus() async {
+        var status: SMAppService.Status = .requiresApproval
+        let model = makeModel(readLoginStatus: { status })
+        XCTAssertTrue(model.launchAtLogin, "approval keeps the requested login setting enabled")
+        XCTAssertNotNil(model.loginMessage, "approval instructions at initialization")
+
+        let cases: [(name: String, status: SMAppService.Status, enabled: Bool, message: String?)] = [
+            ("enabled", .enabled, true, nil),
+            ("not registered", .notRegistered, false, nil),
+            ("not found", .notFound, false, "couldn’t find"),
+            ("unknown", SMAppService.Status(rawValue: 999)!, false, "unavailable"),
+            ("requires approval", .requiresApproval, true, "Approve")
+        ]
+        for item in cases {
+            model.loginMessage = "stale approval or operation error"
+            status = item.status
+            model.refreshLoginStatus()
+            XCTAssertEqual(model.launchAtLogin, item.enabled, "status=\(item.name)")
+            if let message = item.message {
+                XCTAssertTrue(model.loginMessage?.contains(message) == true, "status=\(item.name)")
+            } else {
+                XCTAssertNil(model.loginMessage, "status=\(item.name) must clear stale messages")
+            }
+        }
+    }
+
+    @MainActor
+    func testPermissionPollingRecordsOnlyTransitionsAndDoesNotReadLoginStatus() async {
+        var granted = false
+        var loginReads = 0
+        var configurationChanges = 0
+        let model = makeModel(readAccessibility: { granted }, readLoginStatus: {
+            loginReads += 1
+            return .notRegistered
+        })
+        model.onConfigurationChange = { configurationChanges += 1 }
+        for _ in 0..<3 { model.refreshPermission() }
+        XCTAssertTrue(model.activity.isEmpty, "unchanged denied permission")
+        granted = true
+        for _ in 0..<3 { model.refreshPermission() }
+        XCTAssertTrue(model.accessibilityGranted)
+        granted = false
+        for _ in 0..<3 { model.refreshPermission() }
+        XCTAssertFalse(model.accessibilityGranted)
+        XCTAssertEqual(configurationChanges, 2, "one reconfiguration per trust transition")
+        XCTAssertEqual(model.activity.map(\.message), [
+            "Accessibility access is unavailable.", "Accessibility access granted."
+        ])
+        XCTAssertEqual(loginReads, 1, "only initialization queries ServiceManagement")
+    }
+
+    @MainActor
+    func testMonitoringRetryIsExplicitAndRespectsPauseAndRunningState() async {
+        let model = makeModel()
+        var retries = 0
+        model.onMonitoringRetry = { retries += 1 }
+        model.setMonitoringState(.unavailable)
+        model.setMonitoringState(.unavailable)
+        XCTAssertEqual(model.activity.count, 1, "repeated failure is not another transition")
+        XCTAssertTrue(model.canRetryMonitoring)
+        model.refreshPermission()
+        XCTAssertEqual(retries, 0, "unchanged trust must not automatically retry")
+        model.retryMonitoring()
+        XCTAssertEqual(retries, 1, "explicit retry")
+
+        model.enabled = false
+        XCTAssertFalse(model.canRetryMonitoring, "intentional pause")
+        model.retryMonitoring()
+        XCTAssertEqual(retries, 1, "paused monitoring stays paused")
+        model.enabled = true
+        model.setMonitoringState(.running)
+        model.retryMonitoring()
+        XCTAssertEqual(retries, 1, "a working monitor needs no retry")
+    }
+
+    @MainActor
+    func testMonitoringRetryRechecksRevokedPermission() async {
+        var granted = true
+        let model = makeModel(readAccessibility: { granted })
+        var retries = 0
+        var configurationChanges = 0
+        model.onMonitoringRetry = { retries += 1 }
+        model.onConfigurationChange = { configurationChanges += 1 }
+        model.setMonitoringState(.unavailable)
+        granted = false
+        model.retryMonitoring()
+        XCTAssertFalse(model.canRetryMonitoring)
+        XCTAssertEqual(retries, 0, "revoked permission must prevent a new tap")
+        XCTAssertEqual(configurationChanges, 1, "revocation uses the same state update as polling")
+    }
+
+    @MainActor
+    func testActivityRemainsBoundedAndSessionOnly() async {
+        let model = makeModel()
+        for index in 0..<90 { model.record("Verified attempt \(index)") }
+        XCTAssertEqual(model.activity.count, 80)
+        XCTAssertEqual(model.activity.first?.message, "Verified attempt 89")
+        XCTAssertEqual(model.activity.last?.message, "Verified attempt 10")
+        XCTAssertTrue(makeModel().activity.isEmpty, "a new session starts empty")
+    }
+
+    func testTimeoutRecoveryIsBoundedAndRespectsDisabledOrUntrustedState() {
+        var recovery = TapRecovery()
+        XCTAssertFalse(recovery.shouldRetry(enabled: false, trusted: true), "intentional pause")
+        XCTAssertFalse(recovery.shouldRetry(enabled: true, trusted: false), "permission revoked")
+        XCTAssertTrue(recovery.shouldRetry(enabled: true, trusted: true), "first timeout")
+        XCTAssertFalse(recovery.shouldRetry(enabled: true, trusted: true), "repeated timeout")
+        recovery = TapRecovery()
+        XCTAssertTrue(recovery.shouldRetry(enabled: true, trusted: true), "a new tap resets recovery")
+    }
+}

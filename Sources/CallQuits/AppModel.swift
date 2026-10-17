@@ -19,6 +19,44 @@ struct ActivityEntry: Identifiable {
     let message: String
 }
 
+enum MonitoringState: Equatable {
+    case permissionNeeded, paused, running, unavailable
+
+    var message: String {
+        switch self {
+        case .permissionNeeded: "Accessibility access needed"
+        case .paused: "Paused"
+        case .running: "Ready for your next close"
+        case .unavailable: "Couldn’t start click monitoring"
+        }
+    }
+}
+
+struct LoginStatusPresentation: Equatable {
+    let enabled: Bool
+    let message: String?
+
+    init(_ status: SMAppService.Status) {
+        switch status {
+        case .enabled:
+            enabled = true
+            message = nil
+        case .requiresApproval:
+            enabled = true
+            message = "Approve CallQuits in System Settings → General → Login Items."
+        case .notRegistered:
+            enabled = false
+            message = nil
+        case .notFound:
+            enabled = false
+            message = "macOS couldn’t find the login item. Open CallQuits from your Applications folder and try again."
+        @unknown default:
+            enabled = false
+            message = "Login item status is unavailable. Check System Settings → General → Login Items."
+        }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
@@ -53,9 +91,11 @@ final class AppModel: ObservableObject {
             onConfigurationChange?()
         }
     }
-    @Published var accessibilityGranted = false
-    @Published var monitorRunning = false
-    @Published var statusMessage = "Waiting for Accessibility access"
+    @Published private(set) var accessibilityGranted = false
+    @Published private(set) var monitoringState: MonitoringState = .permissionNeeded
+    var monitorRunning: Bool { monitoringState == .running }
+    var statusMessage: String { monitoringState.message }
+    var canRetryMonitoring: Bool { enabled && accessibilityGranted && !monitorRunning }
     @Published var activity: [ActivityEntry] = []
     @Published var launchAtLogin: Bool {
         didSet {
@@ -66,12 +106,18 @@ final class AppModel: ObservableObject {
     @Published var loginMessage: String?
 
     var onConfigurationChange: (() -> Void)?
+    var onMonitoringRetry: (() -> Void)?
     private let defaults: UserDefaults
+    private let readAccessibility: () -> Bool
+    private let readLoginStatus: () -> SMAppService.Status
     private var updatingLoginStatus = false
 
-    private init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard,
+         readAccessibility: @escaping () -> Bool = { AXIsProcessTrusted() },
+         readLoginStatus: @escaping () -> SMAppService.Status = { SMAppService.mainApp.status }) {
         self.defaults = defaults
+        self.readAccessibility = readAccessibility
+        self.readLoginStatus = readLoginStatus
         defaults.register(defaults: ["enabled": true, "quitOnAnyWindow": false, "forceQuitEnabled": false])
         enabled = defaults.bool(forKey: "enabled")
         behavior = defaults.bool(forKey: "quitOnAnyWindow") ? .everyWindow : .lastWindow
@@ -82,12 +128,10 @@ final class AppModel: ObservableObject {
         } else {
             exclusions = Self.defaultExceptions
         }
-        let loginStatus = SMAppService.mainApp.status
-        launchAtLogin = loginStatus == .enabled || loginStatus == .requiresApproval
-        if loginStatus == .requiresApproval {
-            loginMessage = "Approve CallQuits in System Settings → General → Login Items."
-        }
-        accessibilityGranted = AXIsProcessTrusted()
+        let loginStatus = LoginStatusPresentation(readLoginStatus())
+        launchAtLogin = loginStatus.enabled
+        loginMessage = loginStatus.message
+        accessibilityGranted = readAccessibility()
     }
 
     static let defaultExceptions = [
@@ -101,31 +145,47 @@ final class AppModel: ObservableObject {
     ]
 
     func refreshPermission() {
-        let granted = AXIsProcessTrusted()
-        let changed = granted != accessibilityGranted
+        updateAccessibility(readAccessibility())
+    }
+
+    private func updateAccessibility(_ granted: Bool) {
+        guard granted != accessibilityGranted else { return }
         accessibilityGranted = granted
-        if changed {
-            record(granted ? "Accessibility access granted." : "Accessibility access is unavailable.")
-            onConfigurationChange?()
-        }
+        record(granted ? "Accessibility access granted." : "Accessibility access is unavailable.")
+        onConfigurationChange?()
+    }
+
+    @discardableResult
+    func refreshLoginStatus() -> SMAppService.Status {
+        let status = readLoginStatus()
+        let presentation = LoginStatusPresentation(status)
         updatingLoginStatus = true
-        let loginStatus = SMAppService.mainApp.status
-        launchAtLogin = loginStatus == .enabled || loginStatus == .requiresApproval
-        if loginStatus == .requiresApproval {
-            loginMessage = "Approve CallQuits in System Settings → General → Login Items."
-        } else if loginStatus == .enabled {
-            loginMessage = nil
-        }
+        launchAtLogin = presentation.enabled
+        loginMessage = presentation.message
         updatingLoginStatus = false
+        return status
     }
 
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        accessibilityGranted = AXIsProcessTrustedWithOptions(options)
-        if accessibilityGranted {
-            onConfigurationChange?()
-        } else {
-            openAccessibilitySettings()
+        updateAccessibility(AXIsProcessTrustedWithOptions(options))
+        if !accessibilityGranted { openAccessibilitySettings() }
+    }
+
+    func retryMonitoring() {
+        refreshPermission()
+        guard canRetryMonitoring else { return }
+        onMonitoringRetry?()
+    }
+
+    func setMonitoringState(_ state: MonitoringState) {
+        guard monitoringState != state else { return }
+        monitoringState = state
+        switch state {
+        case .running: record("Click monitoring is ready.")
+        case .unavailable: record("Click monitoring is unavailable. Retry monitoring in Settings.")
+        case .paused: record("Click monitoring is paused.")
+        case .permissionNeeded: break // The permission transition already has an Activity entry.
         }
     }
 
@@ -169,21 +229,14 @@ final class AppModel: ObservableObject {
         do {
             if launchAtLogin {
                 try SMAppService.mainApp.register()
-                if SMAppService.mainApp.status == .requiresApproval {
-                    loginMessage = "Approve CallQuits in System Settings → General → Login Items."
-                    SMAppService.openSystemSettingsLoginItems()
-                } else {
-                    loginMessage = nil
-                }
             } else {
                 try SMAppService.mainApp.unregister()
-                loginMessage = nil
+            }
+            if refreshLoginStatus() == .requiresApproval {
+                SMAppService.openSystemSettingsLoginItems()
             }
         } catch {
-            updatingLoginStatus = true
-            let loginStatus = SMAppService.mainApp.status
-            launchAtLogin = loginStatus == .enabled || loginStatus == .requiresApproval
-            updatingLoginStatus = false
+            refreshLoginStatus()
             loginMessage = "Couldn't update login items. Open CallQuits from your Applications folder and try again."
             record("Login item settings could not be updated.")
         }
