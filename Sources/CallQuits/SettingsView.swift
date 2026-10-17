@@ -63,13 +63,11 @@ struct SettingsView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 11).fill(Style.mint.opacity(0.13))
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 23, weight: .medium))
-                        .foregroundStyle(Style.mint)
-                }
-                .frame(width: 40, height: 40)
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CallQuits").font(.system(size: 16, weight: .bold, design: .rounded))
                     Text("A cleaner goodbye.").font(.system(size: 10)).foregroundStyle(.secondary)
