@@ -5,6 +5,16 @@ import Foundation
 /// The integration must additionally require a regular, running user application and apply the
 /// user's exclusions. Unknown identities fail closed instead of guessing that an app is safe.
 public enum AppProtection {
+    /// Apply the same application-state gate before AX work and immediately before either quit path.
+    public static func isEligible(
+        bundleIdentifier: String?, processID: Int32, ownProcessID: Int32,
+        isTerminated: Bool, isHidden: Bool, isRegular: Bool,
+        isFinishedLaunching: Bool, isExcluded: Bool
+    ) -> Bool {
+        !isTerminated && !isHidden && isRegular && isFinishedLaunching && !isExcluded &&
+        !isProtected(bundleIdentifier: bundleIdentifier, processID: processID, ownProcessID: ownProcessID)
+    }
+
     private static let protectedBundleIdentifiers: Set<String> = [
         "com.apple.finder",
         "com.apple.dock",

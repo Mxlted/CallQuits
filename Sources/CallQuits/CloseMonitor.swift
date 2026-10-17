@@ -138,7 +138,8 @@ final class CloseMonitor {
             invalidate()
             guard let identity = EventIdentity(nativeProcessID: targetValue, eventWindowID: eventWindow,
                                                windowOwnerProcessID: windowOwner(eventWindow)),
-                  identity.processID != ProcessInfo.processInfo.processIdentifier else { return }
+                  let app = NSRunningApplication(processIdentifier: identity.processID),
+                  isEligible(app) else { return }
             pressIdentity = identity
             gesture = CloseGesture(x: point.x, y: point.y, timestamp: timestamp,
                                    targetProcessID: identity.processID, modifiers: intent)
@@ -206,11 +207,13 @@ final class CloseMonitor {
 
     private func isEligible(_ app: NSRunningApplication) -> Bool {
         model.enabled && model.accessibilityGranted && AXIsProcessTrusted() && model.monitorRunning &&
-        !app.isTerminated && !app.isHidden && app.activationPolicy == .regular && app.isFinishedLaunching &&
-        !AppProtection.isProtected(bundleIdentifier: app.bundleIdentifier,
-                                   processID: app.processIdentifier,
-                                   ownProcessID: ProcessInfo.processInfo.processIdentifier) &&
-        app.bundleIdentifier.map { !model.isExcluded($0) } == true
+        AppProtection.isEligible(bundleIdentifier: app.bundleIdentifier,
+                                 processID: app.processIdentifier,
+                                 ownProcessID: ProcessInfo.processInfo.processIdentifier,
+                                 isTerminated: app.isTerminated, isHidden: app.isHidden,
+                                 isRegular: app.activationPolicy == .regular,
+                                 isFinishedLaunching: app.isFinishedLaunching,
+                                 isExcluded: app.bundleIdentifier.map { model.isExcluded($0) } ?? true)
     }
 
     private func requestQuit(_ app: NSRunningApplication, force: Bool, generation token: UInt64, validUntil: TimeInterval) {
