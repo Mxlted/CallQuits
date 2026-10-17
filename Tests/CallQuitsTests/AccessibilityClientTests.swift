@@ -266,3 +266,297 @@ final class AccessibilityClientTests: XCTestCase {
         XCTAssertTrue(result.hasBlockingUI)
     }
 }
+
+final class CloseControlCaptureTests: XCTestCase {
+    private final class Fixture {
+        // Only AXUIElementGetPid sees these opaque handles; all remote reads are injected.
+        let targetPID: pid_t = 710_001
+        let target = AXUIElementCreateApplication(710_001)
+        let button = AXUIElementCreateApplication(710_002)
+        let child = AXUIElementCreateApplication(710_003)
+        let other = AXUIElementCreateApplication(710_004)
+        let point = CGPoint(x: 105, y: 105)
+        let expectedFrame = CGRect(x: 100, y: 100, width: 14, height: 14)
+        let windowAttributes = [kAXRoleAttribute, kAXSubroleAttribute, kAXModalAttribute,
+                                kAXChildrenAttribute, kAXCloseButtonAttribute]
+        let buttonAttributes = [kAXSubroleAttribute, kAXRoleAttribute, kAXEnabledAttribute,
+                                kAXPositionAttribute, kAXSizeAttribute]
+        var windowValues: [CFTypeRef]?
+        var buttonValues: [CFTypeRef]?
+        var windowError: AXError = .success
+        var buttonError: AXError = .success
+        var findError: AXError = .success
+        var findChild = false
+        var returnNoElement = false
+        var childRole: CFTypeRef = kAXGroupRole as CFString
+        var childRoleError: AXError = .success
+        var scalarError: AXError = .success
+        var initialWindows: [AXUIElement]
+        var windowListValue: CFTypeRef?
+        var onFinalButtonRead: (() -> Void)?
+        private(set) var operations: [String] = []
+        private(set) var fallbackReads = 0
+
+        init() {
+            initialWindows = [target]
+            windowValues = [kAXWindowRole as CFString, kAXStandardWindowSubrole as CFString,
+                            kCFBooleanFalse, [] as NSArray, button]
+            buttonValues = [kAXCloseButtonSubrole as CFString, kAXButtonRole as CFString,
+                            kCFBooleanTrue, Self.position(100, 100), Self.size(14, 14)]
+        }
+
+        static func position(_ x: CGFloat, _ y: CGFloat) -> AXValue {
+            var point = CGPoint(x: x, y: y)
+            return AXValueCreate(.cgPoint, &point)!
+        }
+
+        static func size(_ width: CGFloat, _ height: CGFloat) -> AXValue {
+            var size = CGSize(width: width, height: height)
+            return AXValueCreate(.cgSize, &size)!
+        }
+
+        func client() -> AccessibilityClient {
+            AccessibilityClient(readAttribute: { [self] element, attribute in
+                let name = attribute as String
+                operations.append("scalar:\(name)")
+                if CFEqual(element, button), name == kAXWindowAttribute { return (.success, target) }
+                if CFEqual(element, target), name == kAXWindowsAttribute {
+                    return (.success, windowListValue ?? initialWindows as NSArray)
+                }
+                if CFEqual(element, child) {
+                    if name == kAXSubroleAttribute { return (.attributeUnsupported, nil) }
+                    if name == kAXParentAttribute { return (.success, button) }
+                    if name == kAXRoleAttribute { return (childRoleError, childRole) }
+                }
+                if CFEqual(element, button), name == kAXSubroleAttribute,
+                   !operations.contains("batch:button") {
+                    return (.success, kAXCloseButtonSubrole as CFString)
+                }
+                if CFEqual(element, target), windowError == .notImplemented,
+                   let index = windowAttributes.firstIndex(of: name) {
+                    fallbackReads += 1
+                    return (scalarError, windowValues?[index])
+                }
+                if CFEqual(element, button), buttonError == .notImplemented,
+                   let index = buttonAttributes.firstIndex(of: name) {
+                    fallbackReads += 1
+                    return (scalarError, buttonValues?[index])
+                }
+                XCTFail("Unexpected scalar Accessibility read: \(name)")
+                return (.failure, nil)
+            }, readAttributes: { [self] element, attributes in
+                if CFEqual(element, target) {
+                    operations.append("batch:window")
+                    XCTAssertEqual(attributes, windowAttributes)
+                    return (windowError, windowValues)
+                }
+                if CFEqual(element, button) {
+                    operations.append("batch:button")
+                    XCTAssertEqual(attributes, buttonAttributes)
+                    onFinalButtonRead?()
+                    return (buttonError, buttonValues)
+                }
+                XCTFail("Unexpected grouped Accessibility element")
+                return (.failure, nil)
+            }, findElement: { [self] _, location in
+                operations.append("find")
+                XCTAssertEqual(location, point)
+                return (findError, returnNoElement ? nil : (findChild ? child : button))
+            })
+        }
+
+        func capture(eventTime: TimeInterval? = nil, targetPID: pid_t? = nil) -> AccessibilityClient.CloseControl? {
+            client().captureCloseControl(at: point,
+                                         eventTime: eventTime ?? ProcessInfo.processInfo.systemUptime,
+                                         targetPID: targetPID ?? self.targetPID)
+        }
+    }
+
+    func testVerifiedCloseControlPreservesWindowIdentityFrameAndAllInitialWindows() throws {
+        let fixture = Fixture()
+        fixture.initialWindows = [fixture.target, fixture.other]
+        let control = try XCTUnwrap(fixture.capture())
+        XCTAssertTrue(CFEqual(control.window, fixture.target))
+        XCTAssertTrue(CFEqual(control.appElement, AXUIElementCreateApplication(fixture.targetPID)))
+        XCTAssertEqual(control.buttonFrame, fixture.expectedFrame)
+        XCTAssertEqual(control.initialWindows.count, 2)
+        XCTAssertTrue(CFEqual(control.initialWindows[1], fixture.other))
+        XCTAssertEqual(fixture.fallbackReads, 0)
+    }
+
+    func testInitialMembershipIsCapturedBeforeImmediateCloseDuringFinalButtonRead() throws {
+        let fixture = Fixture()
+        fixture.onFinalButtonRead = { fixture.initialWindows = [] }
+        let control = try XCTUnwrap(fixture.capture())
+        XCTAssertTrue(fixture.initialWindows.isEmpty)
+        XCTAssertEqual(control.initialWindows.count, 1)
+        XCTAssertTrue(CFEqual(control.initialWindows[0], fixture.target))
+        XCTAssertEqual(fixture.operations.filter { $0 == "scalar:\(kAXWindowsAttribute)" }.count, 1)
+        let membership = try XCTUnwrap(fixture.operations.firstIndex(of: "scalar:\(kAXWindowsAttribute)"))
+        let finalButton = try XCTUnwrap(fixture.operations.firstIndex(of: "batch:button"))
+        XCTAssertLessThan(membership, finalButton)
+        XCTAssertEqual(fixture.operations.last, "batch:button")
+    }
+
+    func testMissingTargetOrMalformedInitialWindowListStopsBeforeGroupedReads() {
+        let lists: [CFTypeRef] = [([] as NSArray), [AXUIElementCreateApplication(710_004)] as NSArray,
+                                 "not windows" as CFString, ["not a window"] as NSArray]
+        for list in lists {
+            let fixture = Fixture()
+            fixture.windowListValue = list
+            XCTAssertNil(fixture.capture())
+            XCTAssertFalse(fixture.operations.contains(where: { $0.hasPrefix("batch:") }))
+        }
+        let tooMany = Fixture()
+        tooMany.initialWindows = Array(repeating: tooMany.target, count: 65)
+        XCTAssertNil(tooMany.capture())
+    }
+
+    func testWindowOwnerMustMatchVerifiedNativeTargetBeforeWindowEnumeration() {
+        let fixture = Fixture()
+        XCTAssertNil(fixture.capture(targetPID: fixture.targetPID + 1))
+        XCTAssertFalse(fixture.operations.contains("scalar:\(kAXWindowsAttribute)"))
+        XCTAssertFalse(fixture.operations.contains(where: { $0.hasPrefix("batch:") }))
+    }
+
+    func testChildHitResolvesOnlyThroughItsActualCloseButtonParent() throws {
+        let fixture = Fixture()
+        fixture.findChild = true
+        XCTAssertNotNil(fixture.capture())
+        XCTAssertTrue(fixture.operations.contains("scalar:\(kAXParentAttribute)"))
+    }
+
+    func testRequiredWindowRoleSubroleModalAndOfficialButtonCannotBeSubstituted() {
+        let replacements: [(Int, CFTypeRef)] = [
+            (0, kAXSheetRole as CFString), (1, kAXDialogSubrole as CFString),
+            (2, kCFBooleanTrue), (2, NSNumber(value: 0)),
+            (3, "not children" as CFString), (3, ["not an element"] as NSArray),
+            (4, AXUIElementCreateApplication(710_004)), (4, "not a button" as CFString)
+        ]
+        for (index, value) in replacements {
+            let fixture = Fixture()
+            fixture.windowValues![index] = value
+            XCTAssertNil(fixture.capture(), "window attribute index=\(index)")
+            XCTAssertFalse(fixture.operations.contains("batch:button"))
+        }
+    }
+
+    func testFinalButtonMetadataMustStillIdentifyEnabledCloseButton() {
+        let replacements: [(Int, CFTypeRef)] = [
+            (0, kAXMinimizeButtonSubrole as CFString), (1, kAXGroupRole as CFString),
+            (2, kCFBooleanFalse), (2, NSNumber(value: 1)),
+            (3, "not a position" as CFString), (4, "not a size" as CFString),
+            (3, Fixture.size(14, 14)), (4, Fixture.position(100, 100)),
+            (3, Fixture.position(.infinity, 100)), (3, Fixture.position(.nan, 100)),
+            (4, Fixture.size(.infinity, 14)), (4, Fixture.size(14, .nan)),
+            (4, Fixture.size(0, 14)), (4, Fixture.size(14, -1)),
+            (3, Fixture.position(200, 200))
+        ]
+        for (index, value) in replacements {
+            let fixture = Fixture()
+            fixture.buttonValues![index] = value
+            XCTAssertNil(fixture.capture(), "button attribute index=\(index)")
+        }
+    }
+
+    func testSheetOrUnreadableChildBlocksCaptureButOrdinaryChildDoesNot() {
+        for role in [kAXSheetRole as CFString, NSNumber(value: 1)] as [CFTypeRef] {
+            let fixture = Fixture()
+            fixture.windowValues![3] = [fixture.child] as NSArray
+            fixture.childRole = role
+            XCTAssertNil(fixture.capture())
+        }
+        let unreadable = Fixture()
+        unreadable.windowValues![3] = [unreadable.child] as NSArray
+        unreadable.childRoleError = .cannotComplete
+        XCTAssertNil(unreadable.capture())
+        let clear = Fixture()
+        clear.windowValues![3] = [clear.child] as NSArray
+        XCTAssertNotNil(clear.capture())
+        let tooMany = Fixture()
+        tooMany.windowValues![3] = Array(repeating: tooMany.child, count: 65) as NSArray
+        XCTAssertNil(tooMany.capture())
+    }
+
+    func testFailedGroupedReadsNeverFallBackOrAuthorizeControl() {
+        for error: AXError in [.invalidUIElement, .cannotComplete, .attributeUnsupported, .noValue,
+                              .apiDisabled, .failure] {
+            for failsAtWindow in [true, false] {
+                let fixture = Fixture()
+                if failsAtWindow { fixture.windowError = error } else { fixture.buttonError = error }
+                XCTAssertNil(fixture.capture(), "error=\(error.rawValue), window=\(failsAtWindow)")
+                XCTAssertEqual(fixture.fallbackReads, 0)
+            }
+        }
+    }
+
+    func testMalformedGroupedResponseIsNeverAcceptedOrRetried() {
+        var attributeError = AXError.attributeUnsupported
+        let encodedError = AXValueCreate(.axError, &attributeError)!
+        for failsAtWindow in [true, false] {
+            for malformed in 0..<5 {
+                let fixture = Fixture()
+                var values = failsAtWindow ? fixture.windowValues : fixture.buttonValues
+                switch malformed {
+                case 0: values = nil
+                case 1: values?.removeLast()
+                case 2: values?.append(kCFBooleanTrue)
+                case 3: values?[0] = kCFNull
+                default: values?[0] = encodedError
+                }
+                if failsAtWindow { fixture.windowValues = values } else { fixture.buttonValues = values }
+                XCTAssertNil(fixture.capture(), "case=\(malformed), window=\(failsAtWindow)")
+                XCTAssertEqual(fixture.fallbackReads, 0)
+            }
+        }
+    }
+
+    func testOnlyNotImplementedUsesFullyValidatedScalarCompatibilityReads() {
+        let fixture = Fixture()
+        fixture.windowError = .notImplemented
+        fixture.buttonError = .notImplemented
+        XCTAssertNotNil(fixture.capture())
+        XCTAssertEqual(fixture.fallbackReads, fixture.windowAttributes.count + fixture.buttonAttributes.count)
+
+        let invalid = Fixture()
+        invalid.buttonError = .notImplemented
+        invalid.buttonValues![2] = kCFBooleanFalse
+        XCTAssertNil(invalid.capture())
+
+        let failed = Fixture()
+        failed.windowError = .notImplemented
+        failed.scalarError = .cannotComplete
+        XCTAssertNil(failed.capture())
+        XCTAssertEqual(failed.fallbackReads, 1)
+    }
+
+    func testStaleEventAndFailedHitTestNeverStartAttributeReads() {
+        let stale = Fixture()
+        XCTAssertNil(stale.capture(eventTime: ProcessInfo.processInfo.systemUptime - 1))
+        XCTAssertTrue(stale.operations.isEmpty)
+        for missing in [true, false] {
+            let fixture = Fixture()
+            fixture.returnNoElement = missing
+            fixture.findError = missing ? .success : .cannotComplete
+            XCTAssertNil(fixture.capture())
+            XCTAssertEqual(fixture.operations, ["find"])
+        }
+    }
+
+    func testSlowGroupedReadCannotReturnProofOrRenewBudgetThroughFallback() {
+        for error: AXError in [.success, .notImplemented] {
+            let fixture = Fixture()
+            fixture.buttonError = error
+            fixture.onFinalButtonRead = { Thread.sleep(forTimeInterval: 0.57) }
+            XCTAssertNil(fixture.capture())
+            XCTAssertEqual(fixture.fallbackReads, 0)
+        }
+    }
+
+    func testOwnApplicationIsRejectedBeforeHitTesting() {
+        let fixture = Fixture()
+        XCTAssertNil(fixture.client().closeButton(at: fixture.point, eventTime: ProcessInfo.processInfo.systemUptime,
+                                                  targetPID: ProcessInfo.processInfo.processIdentifier))
+        XCTAssertTrue(fixture.operations.isEmpty)
+    }
+}
