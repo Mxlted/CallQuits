@@ -25,6 +25,10 @@ CallQuits uses Accessibility to identify the actual red close button and read wi
 
 Replacing or rebuilding an ad hoc-signed app can leave a stale Accessibility entry. Quit CallQuits, remove its old entry from the Accessibility list, add the current copy from Applications, enable it, and relaunch. During development, toggling the existing entry alone did not always restore access.
 
+### Monitoring is unavailable
+
+When CallQuits is enabled and Accessibility access is granted but monitoring is unavailable, choose **Retry monitoring** from the menu bar menu or Settings. If it still fails, use the permission-recovery help shown in Settings to refresh the Accessibility entry using the steps above. An intentionally paused or disabled app stays paused or disabled; resume or enable it when you are ready.
+
 ## An app stays open
 
 Check these in order:

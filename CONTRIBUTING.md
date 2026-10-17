@@ -6,17 +6,11 @@ Use macOS 14 or newer and Swift 5.9 or newer. Keep third-party runtime dependenc
 
 ## Working locally
 
-See the [development guide](docs/DEVELOPMENT.md) for source builds, Xcode setup, and icon generation.
-
-```sh
-swift test
-./scripts/build.sh
-git diff --check
-```
+See the [development guide](docs/DEVELOPMENT.md) for source builds, Xcode setup, and icon generation. Follow [routine validation](docs/TESTING.md#routine-validation) before delivery, including the staged whitespace check before committing.
 
 Run policy tests before and after changes. Use the [disposable fixture and manual matrix](docs/TESTING.md) for integration checks; never automate termination of a contributor's real apps. State which live checks were actually performed and which still require Accessibility permission or a particular application.
 
-Regenerate `CallQuits.xcodeproj` with `xcodegen generate` when the file structure changes. Keep `project.yml` and the generated project in sync. SwiftPM is the canonical route for policy tests.
+Regenerate `CallQuits.xcodeproj` with `xcodegen generate` only when its configuration or source/resource structure changes, and validate the [Xcode route](docs/TESTING.md#xcode-configuration-changes). Keep `project.yml` and the generated project in sync. SwiftPM is the canonical route for policy tests.
 
 ## Safety constraints
 

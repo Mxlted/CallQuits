@@ -2,7 +2,52 @@
 
 `swift test` exercises the independent policy with simulated application and window states. `./scripts/build.sh` compiles and signs a real app bundle. Neither proves that Accessibility permission is granted or that a particular app exposes reliable window metadata.
 
-The initial suite contains 40 unit tests covering exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. It does not drive the real Core Graphics event tap or Accessibility observer.
+The XCTest suite covers exact event identity and conflicts, close-time window disappearance, gesture modifiers, pointer movement, protected apps, stable close confirmation, unreadable states, sheets, replacement windows, expiry, and repeated decisions. It does not drive the real Core Graphics event tap or Accessibility observer.
+
+## Routine validation
+
+Run from the repository root before delivery:
+
+```sh
+swift test
+./scripts/build.sh
+git diff --check
+```
+
+Before committing, also run `git diff --cached --check` to check the staged changes. These local whitespace checks inspect actual edits; CI's clean checkout would have no working-tree changes to inspect.
+
+Keep debug XCTest execution and the release app-bundle build/signature check. They exercise different configurations and require separate compilation; sharing a scratch path would not eliminate that work. The build script's `swift build --show-bin-path` only locates the output and does not compile it again.
+
+If the default SwiftPM cache locations are not writable, use repository-local directories:
+
+```sh
+mkdir -p .build/cache .build/config .build/security .build/ModuleCache
+CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" \
+SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/ModuleCache" \
+swift test --scratch-path .build/swiftpm --cache-path .build/cache \
+  --config-path .build/config --security-path .build/security --disable-sandbox
+```
+
+The build script already uses writable repository-local caches. Run the focused fixture cases relevant to a behavior change; routine validation does not require regenerating fixtures, icons, or the Xcode project.
+
+CI retains the `macos` job in one workflow, on the explicit `macos-15` image with the app's macOS 14 deployment target unchanged. It validates every pull request without path filters, pushes to the default `main` branch, and manual dispatches. Superseded runs cancel only within the same event type and PR or ref. Only manual dispatch creates a downloadable ad hoc development ZIP, using `ditto` to preserve executable permissions. It does not publish releases. The selected [runner image](https://github.com/actions/runner-images) and [checkout v6](https://github.com/actions/checkout/tree/v6)/[upload-artifact v6](https://github.com/actions/upload-artifact/tree/v6) support current Node 24 action runtimes.
+
+## Xcode configuration changes
+
+After relevant `project.yml` or source/resource structure changes, regenerate the project as described in [Development](DEVELOPMENT.md#xcode-and-project-structure), then build its route:
+
+```sh
+xcodebuild -project CallQuits.xcodeproj -scheme CallQuits \
+  -configuration Release -destination 'platform=macOS' \
+  -derivedDataPath .build/xcode build
+codesign --verify --deep --strict .build/xcode/Build/Products/Release/CallQuits.app
+```
+
+Check that the generated bundle's version and build number match `Resources/Info.plist` and its minimum OS remains macOS 14. SwiftPM remains the canonical test route.
+
+## Release validation
+
+Follow [release preparation](RELEASING.md) to select the Developer ID identity **before** routine validation, so the build step validates the final signed bundle without requiring an ad hoc build first. Run the full manual matrix below on that bundle, including macOS 14 and the current macOS release, then test the exact delivered archive on a separate Mac/account for first install and upgrade. Record untested OS versions, architectures, and scenarios explicitly.
 
 ## Disposable fixture
 
@@ -47,20 +92,23 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Exclude fixture; repeat ordinary and enabled Shift-click | Neither path terminates it. |
 | Protected apps such as Finder or CallQuits | Verify policy protection with unit tests; do not terminate actual system apps. |
 | Accessibility denied or revoked | Explain permission status; do not act on uncertain state. |
-| Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; only resume when enabled and Accessibility trust remains available. |
+| Monitoring unavailable while enabled and Accessibility-trusted | Retry monitoring is available; failed creation/re-enable remains unavailable and exposes permission-recovery help. No endless automatic retries. |
+| Event tap is disabled, then restored | Cancel any pending gesture before re-enabling; resume only after the tap is confirmed enabled and Accessibility trust remains available. A user-disabled tap stays stopped until explicitly retried. |
+| Intentional pause or CallQuits disabled | Permission refresh and monitoring retries must not resume capture implicitly. |
 | Unreadable or unsupported AX tree | Skip; never infer zero windows from an error. |
 | App does not support registration for AX window-created notifications | Skip automatic graceful quit. Sheet notifications are optional because snapshots also inspect sheets. |
 | Very fast click closes the original window before its AX close button can be read | Native close proceeds; skip automatic quit because the gesture could not be verified. |
 | Hung target process | Bound waiting, keep CallQuits responsive, and skip if identity/control cannot be verified. Shift-click is not guaranteed; macOS Force Quit remains available. |
 | Rapid successive clicks or restart of target process | Stale intents cannot affect a newer process or gesture. |
 | Mixed-DPI displays, negative-coordinate display, dock on either screen | Only a positively identified red button may trigger. No geometric fallback. |
-| Relaunch CallQuits; toggle launch at login | Settings persist; actual ServiceManagement status is reported. |
+| Grant/revoke Accessibility while settings are open | Timer and manual refresh produce the same status and one Activity entry per meaningful transition. |
+| Relaunch CallQuits; toggle launch at login or change approval in System Settings | Settings reflect enabled, pending approval, unregistered, missing, or unknown status without stale approval/error text. |
 
 Fullscreen, Spaces, multiple displays, native event target IDs, notification delivery, macOS version differences, and hung targets need a real desktop session. A synthetic policy result does not establish that the corresponding real-world gesture was captured. Verify that each temporary observer's main-run-loop source is removed when its decision completes, is canceled, or times out.
 
 ## Recording results
 
-Record the macOS version, build/commit, permissions, target app, window layout, action, and observed result. Separate the time of the quit request from the visible disappearance of the Dock indicator. A successful `terminate()` request does not prove the app exited; the application may still be saving or may decline.
+Record the macOS version, build/commit, permissions, disposable target app, window layout, action, and observed result. Measure click-to-quit-request, actual process exit, and visible Dock disappearance separately. A successful `terminate()` request does not prove the app exited; the application may still be saving or may decline. Keep physical clicks, computer-use actions, and simulated inputs clearly labeled, without recording document names or window titles.
 
 ## Observed development results — October 16, 2026
 
@@ -69,3 +117,11 @@ With Accessibility granted and the listen-only annotated session event tap activ
 Computer-use automation clicks did not produce a usable event through this path. Direct process delivery or Accessibility actions are possible explanations, but the delivery mechanism was not verified. Those attempts are not evidence for or against physical-pointer behavior.
 
 The full disposable-fixture matrix, multiple-window behavior, save cancellation, minimized windows, other Spaces, and Shift-click force quit still need live verification. No exhaustive compatibility result or measured Dock-indicator latency is claimed. Use the fixture for further integration tests, and update this record only with observed results.
+
+## Review implementation feasibility checks — October 17, 2026
+
+The disposable fixture built on macOS 27.0.1 (26A434), but was not launched for termination tests. A temporary diagnostic process reported no Accessibility trust or listen-event access, and creating the passive annotated-session event tap returned nil. This describes that diagnostic process, not the permission state of an installed CallQuits copy. No physical-pointer participant was available.
+
+No live click-to-quit-request, process-exit, or Dock-disappearance timings were collected. Save cancellation, replacement windows, minimized windows, Spaces, exclusions on both termination paths, monitoring recovery, and macOS 14 still need the live checks above. No personal applications were used as termination targets.
+
+Source inspection found that cancellation work on the serial AX worker waits behind work already running. Per-read soft budgets are checked before attribute calls and can overrun by one bounded synchronous call; polling schedules its next attempt after completion. These observations do not quantify a user-visible cost. Absolute operation expiry, additional between-call cancellation, observer-setup changes, and fast-click optimizations are deliberately deferred until disposable-fixture measurements justify them. Confirmation and safety delays remain unchanged.

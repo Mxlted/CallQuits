@@ -39,7 +39,7 @@ On macOS, closing a window often leaves the app running. CallQuits lives in your
 
 ## Get started
 
-**Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can try a [source build](docs/DEVELOPMENT.md); Intel builds have not yet been tested.
+**Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can try a [source build](docs/DEVELOPMENT.md); Intel runtime behavior has not yet been tested.
 
 > [!IMPORTANT]
 > **Early release:** v0.1.0 is ad hoc signed and **not notarized by Apple**. macOS may block its first launch. See [first-launch help](docs/HELP.md#macos-blocks-the-app). Compatibility testing across apps and macOS versions is still in progress.

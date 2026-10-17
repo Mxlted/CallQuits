@@ -11,16 +11,13 @@ git clone https://github.com/Mxlted/CallQuits.git
 cd CallQuits
 ```
 
-Then, from that repository folder:
+From that repository folder, follow [routine validation](TESTING.md#routine-validation), then launch the resulting app:
 
 ```sh
-swift test
-./scripts/build.sh
-git diff --check
 open build/CallQuits.app
 ```
 
-The build script creates `build/CallQuits.app` for the host Mac's architecture, enables the hardened runtime, and verifies its signature. It defaults to a release configuration and ad hoc signing. Intel builds have not yet been validated. Building does not install or launch the app; the final command above launches it explicitly. Build output and caches stay in `build/` and `.build/`.
+The build script creates `build/CallQuits.app` for the host Mac's architecture, enables the hardened runtime, and verifies its signature. It defaults to a release configuration and ad hoc signing. Intel runtime behavior has not yet been validated. Building does not install or launch the app; the final command above launches it explicitly. Build output and caches stay in `build/` and `.build/`.
 
 For a debug build:
 
@@ -34,13 +31,13 @@ Rebuilding or replacing an ad hoc-signed app can leave a stale Accessibility ent
 
 ## Xcode and project structure
 
-Open `CallQuits.xcodeproj` and run the **CallQuits** scheme. `project.yml` is the source of truth for the Xcode project. After adding or removing source files, regenerate it with [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.38.0 or newer:
+Open `CallQuits.xcodeproj` and run the **CallQuits** scheme. `project.yml` is the source of truth for the Xcode project. Regenerate it with [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.38.0 or newer only after changing its configuration or source/resource structure:
 
 ```sh
 xcodegen generate
 ```
 
-Keep the generated project and `project.yml` in sync.
+Keep the generated project and `project.yml` in sync, then [validate the Xcode route](TESTING.md#xcode-configuration-changes). `Resources/Info.plist` is the sole authority for the app's version and build number; changing those values does not require project regeneration.
 
 | Location | Purpose |
 | --- | --- |
@@ -56,14 +53,7 @@ SwiftPM builds the policy as a separate `CallQuitsCore` module for independent t
 
 `swift test` checks the policy without Accessibility permission or process termination. A successful build confirms compilation and signing; it does not establish that real mouse events, Accessibility notifications, or a particular app behave as expected.
 
-Use the disposable fixture for integration checks:
-
-```sh
-./scripts/build-fixture.sh
-open "build/CallQuits Fixture.app"
-```
-
-Building the fixture does not launch it. It keeps documents in memory and supports multiple windows, unsaved changes, save cancellation, sheets, and replacement windows. Never use personal applications as automated termination targets.
+Build the [disposable fixture](TESTING.md#disposable-fixture) only when needed for integration checks. It keeps documents in memory and supports multiple windows, unsaved changes, save cancellation, sheets, and replacement windows. Never use personal applications as automated termination targets.
 
 Follow the [manual test matrix](TESTING.md) and record what was actually observed. Physical pointer input and computer-use automation can take different delivery paths; an automated click does not prove the global event tap captured a real close-button gesture. Keep simulated results separate from permission-dependent live checks and measured app-exit timing.
 
@@ -75,14 +65,8 @@ The icon is original vector artwork drawn by `scripts/generate-icon.swift`: a co
 ./scripts/generate-icon.sh
 ```
 
-This writes the checked-in `Resources/AppIcon.icns` and `Resources/AppIcon.png`, with intermediate sizes in `build/AppIcon.iconset/`. Review the small and large sizes before committing the source and generated assets together.
+Run this only when changing the artwork. It writes the checked-in `Resources/AppIcon.icns` and `Resources/AppIcon.png`, with intermediate sizes in `build/AppIcon.iconset/`. Review the small and large sizes before committing the source and generated assets together.
 
 ## Prepare a release
 
-Local builds are ad hoc signed and are not notarized. To select an existing Developer ID certificate:
-
-```sh
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/build.sh
-```
-
-Signing alone does not perform notarization or produce a universal binary. Follow [release preparation](RELEASING.md) for packaging, architecture coverage, notarization, and validation of the delivered app. See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution and safety requirements.
+Local builds are ad hoc signed and are not notarized. Follow [release preparation](RELEASING.md) to use an existing Developer ID certificate and validate the final signed bundle, package, notarize, and check the delivered archive. Signing alone does not produce a universal binary. See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution and safety requirements.
