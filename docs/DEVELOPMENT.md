@@ -20,7 +20,7 @@ git diff --check
 open build/CallQuits.app
 ```
 
-The build script creates `build/CallQuits.app` for the host Mac's architecture, enables the hardened runtime, and verifies its signature. It defaults to a release configuration and ad hoc signing. Building does not install or launch the app; the final command above launches it explicitly. Build output and caches stay in `build/` and `.build/`.
+The build script creates `build/CallQuits.app` for the host Mac's architecture, enables the hardened runtime, and verifies its signature. It defaults to a release configuration and ad hoc signing. Intel builds have not yet been validated. Building does not install or launch the app; the final command above launches it explicitly. Build output and caches stay in `build/` and `.build/`.
 
 For a debug build:
 

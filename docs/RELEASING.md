@@ -2,7 +2,7 @@
 
 The default build is a development artifact. Ad hoc signing lets it run locally, but does not establish a trusted publisher identity and does not satisfy notarization for public distribution.
 
-1. Update `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist` and matching values in `project.yml`.
+1. Update `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist` and matching values in `project.yml`. Keep the README release badge, download filename, architecture, and signing status in sync with the published assets.
 2. Regenerate the Xcode project with `xcodegen generate`.
 3. Run `swift test`, `./scripts/build.sh`, and `git diff --check`.
 4. Exercise the [manual test matrix](TESTING.md) in a permission-enabled desktop session, including macOS 14 and the current supported macOS version. Record limitations.

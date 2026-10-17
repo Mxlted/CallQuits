@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/github/v/release/Mxlted/CallQuits?style=flat-square&amp;color=ef6559" alt="Latest release"></a>
+  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/badge/release-v0.1.0-ef6559?style=flat-square" alt="Release v0.1.0"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-303f46?style=flat-square" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/Download-Apple%20silicon-303f46?style=flat-square" alt="Download for Apple silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-303f46?style=flat-square" alt="MIT license"></a>
@@ -39,7 +39,7 @@ On macOS, closing a window often leaves the app running. CallQuits lives in your
 
 ## Get started
 
-**Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can [build from source](docs/DEVELOPMENT.md).
+**Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can try a [source build](docs/DEVELOPMENT.md); Intel builds have not yet been tested.
 
 > [!IMPORTANT]
 > **Early release:** v0.1.0 is ad hoc signed and **not notarized by Apple**. macOS may block its first launch. See [first-launch help](docs/HELP.md#macos-blocks-the-app). Compatibility testing across apps and macOS versions is still in progress.
