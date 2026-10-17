@@ -7,14 +7,18 @@ final class CloseSessionTests: XCTestCase {
         target: Bool = false,
         blocking: Bool = false,
         reliable: Bool = true,
-        replacement: Bool = false
+        replacement: Bool = false,
+        hidden: Bool = false,
+        minimized: Bool = false
     ) -> CloseSnapshot {
         CloseSnapshot(
             windowCount: count,
             targetWindowPresent: target,
             hasBlockingUI: blocking,
             isReliable: reliable,
-            hasReplacementWindow: replacement
+            hasReplacementWindow: replacement,
+            applicationHidden: hidden,
+            targetWindowMinimized: minimized
         )
     }
 
@@ -189,5 +193,137 @@ final class CloseSessionTests: XCTestCase {
         var session = CloseSession(behavior: .lastWindow, startedAt: 0)
         XCTAssertEqual(session.evaluate(snapshot: snapshot(blocking: true), now: 0.1), .cancel(.blockingUI))
         XCTAssertEqual(session.evaluate(snapshot: snapshot(), now: 4), .cancel(.blockingUI))
+    }
+
+    func testAuthorizedHiddenRetainedWindowRequiresStableConfirmation() {
+        for behavior in CloseBehavior.allCases {
+            var session = CloseSession(behavior: behavior, startedAt: 0, allowsApplicationHide: true)
+            XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true), now: 0.02), .wait)
+            XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.05), .wait)
+            XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.19), .wait)
+            XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.21), .quit)
+            XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.4), .cancel(.alreadyFinished))
+        }
+    }
+
+    func testHiddenCloseStillRequiresMinimumElapsedTimeAndExpires() {
+        let hiddenWindow = snapshot(1, target: true, hidden: true)
+        var immediate = CloseSession(behavior: .lastWindow, startedAt: 0, allowsApplicationHide: true)
+        XCTAssertEqual(immediate.evaluate(snapshot: hiddenWindow, now: 0), .wait)
+        XCTAssertEqual(immediate.evaluate(snapshot: hiddenWindow, now: 0.16), .wait)
+        XCTAssertEqual(immediate.evaluate(snapshot: hiddenWindow, now: 0.2), .quit)
+
+        var late = CloseSession(behavior: .lastWindow, startedAt: 0, allowsApplicationHide: true)
+        XCTAssertEqual(late.evaluate(snapshot: hiddenWindow, now: 2.9), .wait)
+        XCTAssertEqual(late.evaluate(snapshot: hiddenWindow, now: 3), .cancel(.expired))
+    }
+
+    func testAuthorizedHiddenAppCanConfirmAnActuallyClosedLastWindow() {
+        var session = CloseSession(behavior: .lastWindow, startedAt: 0, allowsApplicationHide: true)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(hidden: true), now: 0.1), .wait)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(hidden: true), now: 0.2), .wait)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(hidden: true), now: 0.3), .quit)
+    }
+
+    func testHiddenStateWithoutVerifiedAllowanceCancelsEvenWithNoWindows() {
+        for behavior in CloseBehavior.allCases {
+            for current in [snapshot(hidden: true), snapshot(1, target: true, hidden: true)] {
+                var session = CloseSession(behavior: behavior, startedAt: 0)
+                XCTAssertEqual(session.evaluate(snapshot: current, now: 0.1), .cancel(.applicationHidden))
+                XCTAssertEqual(session.evaluate(snapshot: snapshot(), now: 0.4), .cancel(.applicationHidden))
+            }
+        }
+    }
+
+    func testHiddenAllowanceDoesNotBypassWindowSafety() {
+        let cases: [(CloseSnapshot, CloseCancellationReason)] = [
+            (snapshot(1, target: true, reliable: false, hidden: true), .unreliableSnapshot),
+            (snapshot(1, target: true, blocking: true, hidden: true), .blockingUI),
+            (snapshot(1, target: true, replacement: true, hidden: true), .replacementWindow),
+            (snapshot(1, target: true, hidden: true, minimized: true), .windowSetChanged),
+            (snapshot(2, target: true, hidden: true), .remainingWindows),
+            (snapshot(0, target: true, hidden: true), .unreliableSnapshot)
+        ]
+        for behavior in CloseBehavior.allCases {
+            for (current, reason) in cases {
+                for afterConfirmationStarts in [false, true] {
+                    var session = CloseSession(behavior: behavior, startedAt: 0, allowsApplicationHide: true)
+                    if afterConfirmationStarts {
+                        XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.1), .wait)
+                    }
+                    XCTAssertEqual(session.evaluate(snapshot: current, now: 0.3), .cancel(reason))
+                    XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true, hidden: true), now: 0.5), .cancel(reason))
+                }
+            }
+        }
+    }
+
+    func testHiddenConfirmationCancelsOnUnhideOrChangedCompletionKind() {
+        let hiddenRetained = snapshot(1, target: true, hidden: true)
+        let hiddenDisappeared = snapshot(hidden: true)
+        let cases: [(CloseSnapshot, CloseSnapshot)] = [
+            (hiddenRetained, snapshot(1, target: true)),
+            (hiddenDisappeared, snapshot()),
+            (hiddenRetained, hiddenDisappeared),
+            (hiddenDisappeared, hiddenRetained),
+            (snapshot(), hiddenDisappeared)
+        ]
+        for behavior in CloseBehavior.allCases {
+            for (initial, changed) in cases {
+                var session = CloseSession(behavior: behavior, startedAt: 0, allowsApplicationHide: true)
+                XCTAssertEqual(session.evaluate(snapshot: initial, now: 0.1), .wait)
+                XCTAssertEqual(session.evaluate(snapshot: changed, now: 0.3), .cancel(.windowSetChanged))
+            }
+        }
+    }
+
+    func testHiddenAllowanceStillRequiresVisibleTargetToDisappear() {
+        var session = CloseSession(behavior: .lastWindow, startedAt: 0, allowsApplicationHide: true)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true), now: 0.2), .wait)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true), now: 2.9), .wait)
+        XCTAssertEqual(session.evaluate(snapshot: snapshot(1, target: true), now: 3), .cancel(.expired))
+    }
+
+    func testHiddenIntentRequiresSupportedIdentityAndValidReleaseTime() {
+        for bundle in [nil, "", "example.fixture", "com.apple.finder", "com.hnc.DiscordCanary", "COM.HNC.DISCORD"] {
+            XCTAssertNil(HiddenCloseIntent(processID: 42, bundleIdentifier: bundle, releasedAt: 10))
+        }
+        for pid: Int32 in [-1, 0, 1] {
+            XCTAssertNil(HiddenCloseIntent(processID: pid, bundleIdentifier: "com.hnc.Discord", releasedAt: 10))
+        }
+        for release in [Double.nan, Double.infinity, -Double.infinity, -1] {
+            XCTAssertNil(HiddenCloseIntent(processID: 42, bundleIdentifier: "com.hnc.Discord", releasedAt: release))
+        }
+    }
+
+    func testHiddenIntentNeedsMatchingObservedTransitionAndFreshExactIdentity() throws {
+        var intent = try XCTUnwrap(HiddenCloseIntent(processID: 42, bundleIdentifier: "com.hnc.Discord", releasedAt: 10))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.1))
+        XCTAssertFalse(intent.recordHide(processID: 43, at: 10.1))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.2))
+        XCTAssertTrue(intent.recordHide(processID: 42, at: 10.2))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.1))
+        XCTAssertTrue(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.2))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 43, bundleIdentifier: "com.hnc.Discord", at: 10.3))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "example.fixture", at: 10.3))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: nil, at: 10.3))
+        XCTAssertTrue(intent.recordHide(processID: 42, at: 12.9))
+        XCTAssertTrue(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 12.99))
+        XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 13))
+        XCTAssertFalse(intent.recordHide(processID: 42, at: 13))
+    }
+
+    func testHiddenIntentRejectsInvalidOrPreReleaseTransitions() throws {
+        for time in [Double.nan, Double.infinity, -Double.infinity, 9.99, 13] {
+            var intent = try XCTUnwrap(HiddenCloseIntent(processID: 42, bundleIdentifier: "com.hnc.Discord", releasedAt: 10))
+            XCTAssertFalse(intent.recordHide(processID: 42, at: time))
+            XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: 10.5))
+        }
+        var intent = try XCTUnwrap(HiddenCloseIntent(processID: 42, bundleIdentifier: "com.hnc.Discord", releasedAt: 10))
+        XCTAssertTrue(intent.recordHide(processID: 42, at: 10.2))
+        XCTAssertFalse(intent.recordHide(processID: 42, at: 10.1))
+        for time in [Double.nan, Double.infinity, -Double.infinity, 9.99] {
+            XCTAssertFalse(intent.allowsHiddenState(processID: 42, bundleIdentifier: "com.hnc.Discord", at: time))
+        }
     }
 }

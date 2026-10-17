@@ -35,4 +35,56 @@ final class AppEligibilityTests: XCTestCase {
             ), "identity boundary=\(item.name), pid=\(item.pid), bundle=\(String(describing: item.bundleID))")
         }
     }
+
+    func testHiddenDiscordRequiresExplicitVerifiedCloseAllowance() {
+        for allowed in [false, true] {
+            XCTAssertEqual(AppProtection.isEligible(
+                bundleIdentifier: "com.hnc.Discord", processID: 42, ownProcessID: 99,
+                isTerminated: false, isHidden: true, isRegular: true,
+                isFinishedLaunching: true, isExcluded: false,
+                allowsVerifiedHiddenClose: allowed
+            ), allowed)
+        }
+    }
+
+    func testHiddenAllowanceKeepsAllOtherApplicationGuards() {
+        let cases: [(String, Bool, Bool, Bool, Bool)] = [
+            ("terminated", true, true, true, false),
+            ("nonregular", false, false, true, false),
+            ("unfinished launch", false, true, false, false),
+            ("excluded", false, true, true, true)
+        ]
+        for (name, terminated, regular, launched, excluded) in cases {
+            XCTAssertFalse(AppProtection.isEligible(
+                bundleIdentifier: "com.hnc.Discord", processID: 42, ownProcessID: 99,
+                isTerminated: terminated, isHidden: true, isRegular: regular,
+                isFinishedLaunching: launched, isExcluded: excluded,
+                allowsVerifiedHiddenClose: true
+            ), "hidden close must preserve the \(name) guard")
+        }
+    }
+
+    func testHiddenAllowanceCannotBypassIdentityOrBroadenSupportedApps() {
+        let cases: [(String?, Int32)] = [
+            ("com.hnc.Discord", 99),
+            ("com.hnc.Discord", 1),
+            ("com.hnc.Discord", 0),
+            ("com.hnc.Discord", -1),
+            ("com.apple.finder", 42),
+            ("example.fixture", 42),
+            ("com.hnc.DiscordCanary", 42),
+            ("COM.HNC.DISCORD", 42),
+            (" com.hnc.Discord", 42),
+            (nil, 42),
+            ("", 42)
+        ]
+        for (bundle, pid) in cases {
+            XCTAssertFalse(AppProtection.isEligible(
+                bundleIdentifier: bundle, processID: pid, ownProcessID: 99,
+                isTerminated: false, isHidden: true, isRegular: true,
+                isFinishedLaunching: true, isExcluded: false,
+                allowsVerifiedHiddenClose: true
+            ), "bundle=\(String(describing: bundle)), pid=\(pid)")
+        }
+    }
 }

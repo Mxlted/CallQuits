@@ -19,6 +19,8 @@ open build/CallQuits.app
 
 The build script creates `build/CallQuits.app` for the host Mac's architecture, enables the hardened runtime, and verifies its signature. It defaults to a release configuration and ad hoc signing. Intel runtime behavior has not yet been validated. Building does not install or launch the app; the final command above launches it explicitly. Build output and caches stay in `build/` and `.build/`.
 
+To preserve an existing finalized release bundle, set `APP_BUNDLE_PATH="$PWD/build/development/CallQuits.app"` when running the build script. This changes only the output bundle location; configuration and signing options still apply.
+
 For a debug build:
 
 ```sh

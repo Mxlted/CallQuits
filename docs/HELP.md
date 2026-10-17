@@ -19,7 +19,7 @@ First-launch approval is separate from Accessibility permission. A managed Mac m
 3. Enable CallQuits. If it is missing, use **+** to select it from Applications.
 4. Reopen CallQuits if its status has not updated.
 
-CallQuits uses Accessibility to identify the actual red close button and read window/control metadata. It does not record keystrokes or document content. Its event-listening design does not request a separate Input Monitoring grant, Screen Recording, or Full Disk Access. See [Apple's Accessibility and event-listening explanation](https://developer.apple.com/forums/thread/828052).
+CallQuits uses Accessibility to identify the actual red close button and read window/control metadata. Pressing a key cancels a pending close attempt; the key itself is never read or recorded. It does not record document content. Its event-listening design does not request a separate Input Monitoring grant, Screen Recording, or Full Disk Access. See [Apple's Accessibility and event-listening explanation](https://developer.apple.com/forums/thread/828052).
 
 ### Permission is enabled, but CallQuits still reports no access
 
@@ -38,6 +38,9 @@ Check these in order:
 3. **No other windows remain.** In the default last-window mode, minimized windows and windows on other Spaces still count.
 4. **You clicked the red close button.** ⌘W, menu commands, programmatic closes, and Option/Command/Control-clicks do not trigger automatic quit. Shift-click also leaves native behavior alone unless force quit is enabled.
 5. **No save dialog or replacement window interrupted the close.** Either cancels the attempt, even if you later resolve the dialog.
+6. **No further interaction interrupted confirmation.** A new click or key press cancels the pending attempt.
+
+Development builds include normal-close handling for Discord hiding its main window. This requires one nonminimized Discord window and reliable Accessibility confirmation; extra windows, sheets, replacements, or uncertain state still prevent quitting. It sends a normal quit request and does not require enabling Shift-click force quit. This change is not part of the published v0.1.1 download. See the [validation record](TESTING.md#discord-hide-on-close-development-checks--october-17-2026) for tested behavior and remaining checks.
 
 Some apps expose incomplete Accessibility information or do not support the window notifications CallQuits needs. A very fast click can close the window before its button can be identified. These cases are skipped rather than guessed. Check **Settings → Activity** for permission changes and quit decisions; unrecognized clicks may not produce an entry.
 

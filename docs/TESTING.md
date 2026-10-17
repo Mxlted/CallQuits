@@ -58,6 +58,8 @@ open "build/CallQuits Fixture.app"
 
 The fixture deliberately remains running after its last window closes. Its documents are memory-only and it never reads or writes personal files. Relaunch it between quit cases. Its File menu can create a window even when all previous windows are closed. Use its checkboxes to simulate unsaved changes or a replacement window, and its button to show a blocking sheet.
 
+The **Hide application instead of closing** checkbox reproduces retained-window behavior for native/AX inspection. Dirty-close and blocking-sheet handling run first. The fixture logs lifecycle timestamps to stdout without window titles or document content. Its bundle identity is not Discord, so production CallQuits must continue rejecting its hidden state; testing the Discord-specific snapshot policy in isolation requires an explicitly injected qualification, not a spoofed bundle identifier.
+
 Enable CallQuits and grant its Accessibility permission before live checks. Confirm the fixture is not excluded. Use last-window mode and leave Shift-click force quit disabled unless the test explicitly requires them. Do not use the user's real applications as termination targets.
 
 ## Manual matrix
@@ -86,6 +88,7 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Close, then create another window during the confirmation interval | App remains. |
 | A new window appears briefly between snapshots | A supported window-created notification cancels the pending normal quit. |
 | Switch mode, pause, revoke permission, or exclude fixture while a decision is pending | Old intent cannot terminate the fixture. |
+| Press a key while a close is pending, including Cancel/Escape or Hide shortcuts | Cancel the attempt without reading or recording the key. A later app hide must not revive it. |
 | Enable any-window mode and close one of two clean windows | Graceful quit is requested after the clicked window closes. |
 | Any-window mode with another unsaved document | The target app's ordinary quit/save behavior remains authoritative. |
 | Enable Shift-click force quit after warning; Shift-click a verified red button | Explicit force quit may discard all fixture state, even with other windows. |
@@ -125,3 +128,15 @@ The disposable fixture built on macOS 27.0.1 (26A434), but was not launched for 
 No live click-to-quit-request, process-exit, or Dock-disappearance timings were collected. Save cancellation, replacement windows, minimized windows, Spaces, exclusions on both termination paths, monitoring recovery, and macOS 14 still need the live checks above. No personal applications were used as termination targets.
 
 Source inspection found that cancellation work on the serial AX worker waits behind work already running. Per-read soft budgets are checked before attribute calls and can overrun by one bounded synchronous call; polling schedules its next attempt after completion. These observations do not quantify a user-visible cost. Absolute operation expiry, additional between-call cancellation, observer-setup changes, and fast-click optimizations are deliberately deferred until disposable-fixture measurements justify them. Confirmation and safety delays remain unchanged.
+
+## Discord hide-on-close development checks — October 17, 2026
+
+On this Mac, programmatic closes in a disposable native fixture retained the identical AX window after hiding. The app-hidden state updated asynchronously. A second window, including a minimized one, remained in the AX window list. Dirty-close and existing blocking sheets prevented hiding and remained visible in AX. Five native/self-AX scenarios completed; these were not physical pointer captures or measurements of Discord.
+
+A separate disposable probe compiled the production `AccessibilityClient`, `CloseSession`, and `AppProtection` unchanged. With verified-click qualification explicitly injected into the probe only, clean hidden-window snapshots waited for stable confirmation, then produced a graceful quit decision and the fixture exited. Dirty-close and existing sheets canceled with `blockingUI`; two retained windows canceled with `remainingWindows`. The blocked fixtures were quit separately during cleanup. This validates the snapshot/policy path, not event identity, positive close-button hit testing, external AX permission, or observer delivery.
+
+XCTest covers the scoped identity/transition allowance, release expiry, hidden-before-click protection, retained/minimized/multiple windows, sheets, replacement windows, unreliable snapshots, unhide, and final eligibility boundaries. Keyboard-interruption delivery and both hide-notification orderings through the complete monitor still need live validation. No user applications were used as automated termination targets. No click-to-quit or Dock-disappearance timing is claimed.
+
+Routine validation passed: 63 debug XCTest cases, the release-configuration bundle build with the existing Developer ID identity, strict signature verification, and whitespace checks. The release build needed desktop execution access for `dsymutil`; no source workaround was required. The separately built development app was installed locally, and computer-use inspection showed **Watching close buttons** with Accessibility access retained. The previous notarized app was preserved for rollback; the development build was not submitted for notarization or published.
+
+After installation, the user physically clicked Discord's red close button without Shift and reported that Discord quit normally. Activity recorded **Asked Discord to quit**, and a subsequent read-only process check found no running Discord main application. This is one observed successful normal-close case for the installed Discord 0.0.416 (with Equicord), not a guarantee across Discord versions, release channels, or window arrangements.

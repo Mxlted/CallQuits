@@ -6,6 +6,48 @@ public enum CloseBehavior: String, CaseIterable, Codable, Sendable {
     case everyWindow
 }
 
+/// A narrow compatibility allowance for Discord hiding after a verified normal close gesture.
+/// The integration creates this only after matching native mouse-down/up identities and still
+/// requires a positive AX close-button hit and a safe, complete window snapshot before quitting.
+public struct HiddenCloseIntent: Sendable {
+    private let processID: Int32
+    private let bundleIdentifier: String
+    private let releasedAt: TimeInterval
+    private var hiddenAt: TimeInterval?
+
+    public static func supports(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == "com.hnc.Discord"
+    }
+
+    public init?(processID: Int32, bundleIdentifier: String?, releasedAt: TimeInterval) {
+        guard processID > 1, let bundleIdentifier, Self.supports(bundleIdentifier: bundleIdentifier),
+              releasedAt.isFinite, releasedAt >= 0 else { return nil }
+        self.processID = processID
+        self.bundleIdentifier = bundleIdentifier
+        self.releasedAt = releasedAt
+    }
+
+    /// Only an observed hide of this exact process after release can authorize hidden state.
+    /// Repeated notifications never move the original release deadline or first hide timestamp.
+    @discardableResult
+    public mutating func recordHide(processID: Int32, at now: TimeInterval) -> Bool {
+        guard processID == self.processID, isFresh(at: now),
+              hiddenAt.map({ now >= $0 }) ?? true else { return false }
+        if hiddenAt == nil { hiddenAt = now }
+        return true
+    }
+
+    public func allowsHiddenState(processID: Int32, bundleIdentifier: String?, at now: TimeInterval) -> Bool {
+        guard processID == self.processID, bundleIdentifier == self.bundleIdentifier,
+              let hiddenAt, now >= hiddenAt else { return false }
+        return isFresh(at: now)
+    }
+
+    private func isFresh(at now: TimeInterval) -> Bool {
+        now.isFinite && now >= releasedAt && now - releasedAt < CloseSession.maximumDuration
+    }
+}
+
 /// A complete Accessibility snapshot of an application, including minimized windows and other Spaces.
 ///
 /// The caller must mark partially read snapshots unreliable and compare window identities against
@@ -16,19 +58,25 @@ public struct CloseSnapshot: Sendable {
     public let hasBlockingUI: Bool
     public let isReliable: Bool
     public let hasReplacementWindow: Bool
+    public let applicationHidden: Bool
+    public let targetWindowMinimized: Bool
 
     public init(
         windowCount: Int,
         targetWindowPresent: Bool,
         hasBlockingUI: Bool,
         isReliable: Bool,
-        hasReplacementWindow: Bool = false
+        hasReplacementWindow: Bool = false,
+        applicationHidden: Bool = false,
+        targetWindowMinimized: Bool = false
     ) {
         self.windowCount = windowCount
         self.targetWindowPresent = targetWindowPresent
         self.hasBlockingUI = hasBlockingUI
         self.isReliable = isReliable
         self.hasReplacementWindow = hasReplacementWindow
+        self.applicationHidden = applicationHidden
+        self.targetWindowMinimized = targetWindowMinimized
     }
 }
 
@@ -43,6 +91,7 @@ public enum CloseCancellationReason: Equatable, Sendable {
     case expired
     case invalidTiming
     case alreadyFinished
+    case applicationHidden
 }
 
 public enum CloseDecision: Equatable, Sendable {
@@ -62,14 +111,20 @@ public struct CloseSession: Sendable {
     public static let maximumDuration: TimeInterval = 3
 
     private let behavior: CloseBehavior
+    private let allowsApplicationHide: Bool
     private let startedAt: TimeInterval
     private var previousObservationAt: TimeInterval
-    private var disappearanceObservedAt: TimeInterval?
+    private var completionObservedAt: TimeInterval?
     private var confirmationWindowCount: Int?
+    private var confirmationKind: CompletionKind?
+    private var confirmationApplicationHidden: Bool?
     private var finishedReason: CloseCancellationReason?
 
-    public init(behavior: CloseBehavior, startedAt: TimeInterval) {
+    private enum CompletionKind: Sendable { case disappeared, hiddenRetainedWindow }
+
+    public init(behavior: CloseBehavior, startedAt: TimeInterval, allowsApplicationHide: Bool = false) {
         self.behavior = behavior
+        self.allowsApplicationHide = allowsApplicationHide
         self.startedAt = startedAt
         self.previousObservationAt = startedAt
     }
@@ -88,29 +143,41 @@ public struct CloseSession: Sendable {
         else { return cancel(.unreliableSnapshot) }
         guard !snapshot.hasBlockingUI else { return cancel(.blockingUI) }
         guard !snapshot.hasReplacementWindow else { return cancel(.replacementWindow) }
+        guard !snapshot.applicationHidden || allowsApplicationHide else { return cancel(.applicationHidden) }
         previousObservationAt = now
 
-        if snapshot.targetWindowPresent {
+        let completionKind: CompletionKind
+        if snapshot.applicationHidden && snapshot.targetWindowPresent {
+            guard snapshot.windowCount == 1 else { return cancel(.remainingWindows) }
+            guard !snapshot.targetWindowMinimized else { return cancel(.windowSetChanged) }
+            completionKind = .hiddenRetainedWindow
+        } else if snapshot.targetWindowPresent {
             // A window that reappears may represent a canceled close or reused AX identity.
-            guard disappearanceObservedAt == nil else { return cancel(.windowSetChanged) }
+            guard completionObservedAt == nil else { return cancel(.windowSetChanged) }
             return .wait
+        } else {
+            completionKind = .disappeared
         }
 
-        if behavior == .lastWindow && snapshot.windowCount != 0 {
+        if completionKind == .disappeared && behavior == .lastWindow && snapshot.windowCount != 0 {
             return cancel(.remainingWindows)
         }
 
-        guard let disappearedAt = disappearanceObservedAt else {
-            disappearanceObservedAt = now
+        guard let completedAt = completionObservedAt else {
+            completionObservedAt = now
             confirmationWindowCount = snapshot.windowCount
+            confirmationKind = completionKind
+            confirmationApplicationHidden = snapshot.applicationHidden
             return .wait
         }
 
-        guard snapshot.windowCount == confirmationWindowCount else {
+        guard snapshot.windowCount == confirmationWindowCount,
+              completionKind == confirmationKind,
+              snapshot.applicationHidden == confirmationApplicationHidden else {
             return cancel(.windowSetChanged)
         }
 
-        guard now - disappearedAt >= Self.confirmationInterval,
+        guard now - completedAt >= Self.confirmationInterval,
               now - startedAt >= Self.minimumElapsedTime
         else {
             return .wait

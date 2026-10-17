@@ -1,5 +1,10 @@
 import AppKit
 
+private func fixtureLog(_ event: String) {
+    print(String(format: "[%.6f] %@", ProcessInfo.processInfo.systemUptime, event))
+    fflush(stdout)
+}
+
 // A disposable app that deliberately stays running after its last window closes.
 // All its document state is in memory; no user documents are opened or written.
 final class FixtureDelegate: NSObject, NSApplicationDelegate {
@@ -7,6 +12,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
     var nextNumber = 1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        fixtureLog("application launched")
         let menu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu()
@@ -27,10 +33,18 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationDidHide(_ notification: Notification) { fixtureLog("application hidden") }
+    func applicationDidUnhide(_ notification: Notification) { fixtureLog("application unhidden") }
+    func applicationWillTerminate(_ notification: Notification) { fixtureLog("application will terminate") }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        fixtureLog("graceful quit requested")
         let dirtyWindows = controllers.compactMap(\.window).filter(\.isDocumentEdited)
         guard let first = dirtyWindows.first else { return .terminateNow }
-        guard dirtyWindows.allSatisfy({ $0.attachedSheet == nil }) else { return .terminateCancel }
+        guard dirtyWindows.allSatisfy({ $0.attachedSheet == nil }) else {
+            fixtureLog("quit canceled: sheet present")
+            return .terminateCancel
+        }
         let alert = NSAlert()
         alert.messageText = "Save remaining disposable documents?"
         alert.informativeText = "There are \(dirtyWindows.count) unsaved documents. Cancel must keep the app running after a normal quit request. No actual files are written."
@@ -39,6 +53,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Don't Save")
         alert.beginSheetModal(for: first) { response in
             let shouldQuit = response != .alertSecondButtonReturn
+            fixtureLog(shouldQuit ? "quit sheet accepted" : "quit sheet canceled")
             if shouldQuit { dirtyWindows.forEach { $0.isDocumentEdited = false } }
             sender.reply(toApplicationShouldTerminate: shouldQuit)
         }
@@ -51,6 +66,7 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         controllers.append(controller)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        fixtureLog("window opened")
     }
 }
 
@@ -58,10 +74,11 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
     weak var fixtureOwner: FixtureDelegate?
     var allowCloseOnce = false
     var shouldReplace = false
+    var shouldHideOnClose = false
 
     init(number: Int, owner: FixtureDelegate) {
         self.fixtureOwner = owner
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 410),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
         window.title = "Disposable document \(number)"
@@ -78,6 +95,7 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
         detail.textColor = .secondaryLabelColor
         let dirty = NSButton(checkboxWithTitle: "Unsaved changes — ask before closing", target: self, action: #selector(toggleDirty(_:)))
         let replace = NSButton(checkboxWithTitle: "Open a replacement window after closing", target: self, action: #selector(toggleReplacement(_:)))
+        let hide = NSButton(checkboxWithTitle: "Hide application instead of closing", target: self, action: #selector(toggleHideOnClose(_:)))
         let new = NSButton(title: "New Window (⌘N)", target: owner, action: #selector(FixtureDelegate.newWindow))
         let sheet = NSButton(title: "Show Blocking Sheet", target: self, action: #selector(showSheet))
         let buttons = NSStackView(views: [new, sheet])
@@ -86,7 +104,7 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
             "Try multiple windows, minimize one, move one to another Space, cancel a save, drag away from the red button, or use ⌘W. The File menu still works when no window is open.")
         hint.font = .systemFont(ofSize: 12)
         hint.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [title, detail, dirty, replace, buttons, hint])
+        let stack = NSStackView(views: [title, detail, dirty, replace, hide, buttons, hint])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -97,13 +115,14 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -28),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28)
         ])
-        window.minSize = NSSize(width: 540, height: 360)
+        window.minSize = NSSize(width: 540, height: 410)
     }
 
     required init?(coder: NSCoder) { nil }
 
     @objc func toggleDirty(_ sender: NSButton) { window?.isDocumentEdited = sender.state == .on }
     @objc func toggleReplacement(_ sender: NSButton) { shouldReplace = sender.state == .on }
+    @objc func toggleHideOnClose(_ sender: NSButton) { shouldHideOnClose = sender.state == .on }
 
     @objc func showSheet() {
         guard let window, window.attachedSheet == nil else { return }
@@ -115,9 +134,16 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if allowCloseOnce { allowCloseOnce = false; return true }
-        guard sender.isDocumentEdited else { return true }
-        guard sender.attachedSheet == nil else { return false }
+        fixtureLog("window close requested")
+        guard sender.attachedSheet == nil else {
+            fixtureLog("close canceled: sheet present")
+            return false
+        }
+        if allowCloseOnce {
+            allowCloseOnce = false
+            return completeCleanClose()
+        }
+        guard sender.isDocumentEdited else { return completeCleanClose() }
         let alert = NSAlert()
         alert.messageText = "Save this disposable document?"
         alert.informativeText = "No actual file is written. Cancel must keep this window and app open."
@@ -125,6 +151,7 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Don't Save")
         alert.beginSheetModal(for: sender) { [weak self] response in
+            fixtureLog(response == .alertSecondButtonReturn ? "close sheet canceled" : "close sheet accepted")
             guard response != .alertSecondButtonReturn, let self else { return }
             sender.isDocumentEdited = false
             self.allowCloseOnce = true
@@ -133,7 +160,15 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
+    private func completeCleanClose() -> Bool {
+        guard shouldHideOnClose else { return true }
+        fixtureLog("hiding application instead of closing window")
+        NSApp.hide(nil)
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
+        fixtureLog("window will close")
         let replace = shouldReplace
         let owner = fixtureOwner
         owner?.controllers.removeAll { $0 === self }

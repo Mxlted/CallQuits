@@ -9,9 +9,11 @@ public enum AppProtection {
     public static func isEligible(
         bundleIdentifier: String?, processID: Int32, ownProcessID: Int32,
         isTerminated: Bool, isHidden: Bool, isRegular: Bool,
-        isFinishedLaunching: Bool, isExcluded: Bool
+        isFinishedLaunching: Bool, isExcluded: Bool,
+        allowsVerifiedHiddenClose: Bool = false
     ) -> Bool {
-        !isTerminated && !isHidden && isRegular && isFinishedLaunching && !isExcluded &&
+        let allowsHidden = allowsVerifiedHiddenClose && HiddenCloseIntent.supports(bundleIdentifier: bundleIdentifier)
+        return !isTerminated && (!isHidden || allowsHidden) && isRegular && isFinishedLaunching && !isExcluded &&
         !isProtected(bundleIdentifier: bundleIdentifier, processID: processID, ownProcessID: ownProcessID)
     }
 

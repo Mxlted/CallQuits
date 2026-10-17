@@ -12,6 +12,7 @@ final class AccessibilityClient {
         let window: AXUIElement
         let initialWindows: [AXUIElement]
         let buttonFrame: CGRect
+        let allowsApplicationHide: Bool
     }
 
     private enum ReadError: Error { case unavailable, unexpectedValue, exceededBudget }
@@ -58,8 +59,12 @@ final class AccessibilityClient {
             let appElement = AXUIElementCreateApplication(pid)
             let windows = try windows(appElement)
             guard windows.contains(where: { CFEqual($0, window) }) else { return nil }
+            // Only Discord's single, nonminimized window can use hide-on-close confirmation.
+            // Every reported window counts here, including windows on other Spaces.
+            let allowsHide = HiddenCloseIntent.supports(bundleIdentifier: app.bundleIdentifier) &&
+                windows.count == 1 && (try? bool(window, kAXMinimizedAttribute)) == false
             return Hit(application: app, appElement: appElement, window: window,
-                       initialWindows: windows, buttonFrame: frame)
+                       initialWindows: windows, buttonFrame: frame, allowsApplicationHide: allowsHide)
         } catch { return nil }
     }
 
@@ -67,20 +72,32 @@ final class AccessibilityClient {
         deadline = ProcessInfo.processInfo.systemUptime + 0.45
         do {
             let current = try windows(hit.appElement)
+            let targetPresent = current.contains { CFEqual($0, hit.window) }
             var blocking = false
             // All windows count, including minimized windows, panels, and other Spaces.
             // Inspect sheets/modal state only while windows exist; empty is not guessed on AX errors.
             for window in current {
                 if try hasBlockingUI(window) { blocking = true; break }
             }
+            let hidden = hit.application.isHidden
+            // A hidden Discord window is retained, not destroyed. Read its minimized state
+            // explicitly; unsupported metadata must never authorize the compatibility path.
+            var minimized = false
+            if hidden && hit.allowsApplicationHide && targetPresent {
+                guard let value = try bool(hit.window, kAXMinimizedAttribute) else { throw ReadError.unexpectedValue }
+                minimized = value
+            }
+            guard hidden == hit.application.isHidden else { throw ReadError.unexpectedValue }
             return CloseSnapshot(
                 windowCount: current.count,
-                targetWindowPresent: current.contains { CFEqual($0, hit.window) },
+                targetWindowPresent: targetPresent,
                 hasBlockingUI: blocking,
                 isReliable: true,
                 hasReplacementWindow: current.contains { candidate in
                     !hit.initialWindows.contains { CFEqual($0, candidate) }
-                }
+                },
+                applicationHidden: hidden,
+                targetWindowMinimized: minimized
             )
         } catch {
             return CloseSnapshot(windowCount: 0, targetWindowPresent: true,

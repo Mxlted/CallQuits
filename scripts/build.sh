@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_ROOT="$ROOT/.build"
-APP="$ROOT/build/CallQuits.app"
+APP="${APP_BUNDLE_PATH:-$ROOT/build/CallQuits.app}"
 CONFIGURATION="${CONFIGURATION:-release}"
 SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 

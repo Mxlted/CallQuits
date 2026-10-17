@@ -28,6 +28,11 @@ final class CloseMonitor {
     private var generation: UInt64 = 0
     private var gesture: CloseGesture?
     private var pressIdentity: EventIdentity?
+    private var pressApplication: NSRunningApplication?
+    private var releasePending = false
+    private var hiddenCloseIntent: HiddenCloseIntent?
+    private var verifiedCloseApplication: NSRunningApplication?
+    private var awaitingHide: (() -> Void)?
     private var windowObservation: CloseWindowObservation?
     private var tapRecovery = TapRecovery()
 
@@ -41,12 +46,24 @@ final class CloseMonitor {
         for notification in [NSWorkspace.willSleepNotification,
                              NSWorkspace.screensDidSleepNotification,
                              NSWorkspace.sessionDidResignActiveNotification,
-                             NSWorkspace.activeSpaceDidChangeNotification,
-                             NSWorkspace.didHideApplicationNotification] {
+                             NSWorkspace.activeSpaceDidChangeNotification] {
             workspaceObservers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.invalidate() }
             })
         }
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didHideApplicationNotification,
+                                                     object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated { self?.applicationDidHide(notification) }
+        })
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didUnhideApplicationNotification,
+                                                     object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let self, let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      self.allowsHiddenClose(app) else { return }
+                if let verified = self.verifiedCloseApplication { self.cancelClose(verified, reason: .windowSetChanged) }
+                else { self.invalidate() }
+            }
+        })
         // Only checks our permission bit, never enumerates other apps or windows when idle.
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -77,7 +94,7 @@ final class CloseMonitor {
             model.setMonitoringState(model.enabled ? .permissionNeeded : .paused)
             return
         }
-        let mask = [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged]
+        let mask = [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged, .keyDown]
             .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
         // AppKit's reconstructed CGEvent can identify the observing app as its recipient.
         // Read the original annotated mouse event instead. A listen-only tap cannot modify input.
@@ -91,6 +108,12 @@ final class CloseMonitor {
                     monitor.model.record("macOS paused click monitoring. Enable CallQuits to resume.")
                 } else if type == .tapDisabledByTimeout {
                     monitor.resumeAfterTimeout()
+                } else if type == .keyDown {
+                    // Only the existence of an intervening key press matters. Never inspect
+                    // its keycode, characters, or recipient; idle typing does no work.
+                    if monitor.gesture != nil || monitor.releasePending || monitor.verifiedCloseApplication != nil {
+                        monitor.invalidate()
+                    }
                 } else { monitor.handle(type, event: event) }
             }
             return Unmanaged.passUnretained(event)
@@ -147,9 +170,35 @@ final class CloseMonitor {
         generation &+= 1
         gesture = nil
         pressIdentity = nil
+        pressApplication = nil
+        releasePending = false
+        hiddenCloseIntent = nil
+        verifiedCloseApplication = nil
+        awaitingHide = nil
         windowObservation?.stop()
         windowObservation = nil
         worker.cancel(generation: generation)
+    }
+
+    private func applicationDidHide(_ notification: Notification) {
+        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+           hiddenCloseIntent?.recordHide(processID: app.processIdentifier,
+                                         at: ProcessInfo.processInfo.systemUptime) == true {
+            // Native release has matched, but a positive AX hit is still mandatory. Keeping
+            // this evidence lets a hide notification arrive before the worker's hit callback.
+            let resume = awaitingHide
+            awaitingHide = nil
+            resume?()
+            return
+        }
+        if let app = verifiedCloseApplication { cancelClose(app, reason: .applicationHidden) }
+        else { invalidate() }
+    }
+
+    private func allowsHiddenClose(_ app: NSRunningApplication) -> Bool {
+        hiddenCloseIntent?.allowsHiddenState(processID: app.processIdentifier,
+                                             bundleIdentifier: app.bundleIdentifier,
+                                             at: ProcessInfo.processInfo.systemUptime) == true
     }
 
     private func handle(_ type: CGEventType, event: CGEvent) {
@@ -170,6 +219,7 @@ final class CloseMonitor {
                   let app = NSRunningApplication(processIdentifier: identity.processID),
                   isEligible(app) else { return }
             pressIdentity = identity
+            pressApplication = app
             gesture = CloseGesture(x: point.x, y: point.y, timestamp: timestamp,
                                    targetProcessID: identity.processID, modifiers: intent)
             guard gesture != nil else { return }
@@ -186,45 +236,81 @@ final class CloseMonitor {
             gesture = nil
             pressIdentity = nil
             let force = action == .force
+            if !force, let app = pressApplication {
+                hiddenCloseIntent = HiddenCloseIntent(processID: app.processIdentifier,
+                                                     bundleIdentifier: app.bundleIdentifier, releasedAt: timestamp)
+            }
+            pressApplication = nil
             let token = generation
             let validUntil = timestamp + (force ? 0.8 : CloseSession.maximumDuration)
+            releasePending = true
             worker.mouseUp(point: point, eventTime: timestamp, generation: token) { [weak self] hit in
-                guard let self, token == self.generation, self.isEligible(hit.application) else { return }
-                if force {
-                    self.requestQuit(hit.application, force: true, generation: token, validUntil: validUntil)
-                } else {
-                    self.worker.prepareObservation(hit: hit, generation: token, onChange: { [weak self] reason in
-                        guard let self, self.generation == token else { return }
+                guard let self, token == self.generation else { return }
+                self.releasePending = false
+                self.verifiedCloseApplication = hit.application
+                // macOS can update isHidden before delivering didHide. Wait for that exact
+                // transition without doing more AX work or granting permission to quit.
+                if !force && hit.allowsApplicationHide && hit.application.isHidden && !self.allowsHiddenClose(hit.application) {
+                    self.awaitingHide = { [weak self] in
+                        self?.confirmVerifiedClose(hit: hit, force: false, token: token, validUntil: validUntil)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(0, validUntil - ProcessInfo.processInfo.systemUptime)) { [weak self] in
+                        guard let self, token == self.generation, self.awaitingHide != nil else { return }
+                        self.cancelClose(hit.application, reason: .expired)
+                    }
+                    return
+                }
+                self.confirmVerifiedClose(hit: hit, force: force, token: token, validUntil: validUntil)
+            }
+        default: break
+        }
+    }
+
+    private func confirmVerifiedClose(hit: AccessibilityClient.Hit, force: Bool, token: UInt64, validUntil: TimeInterval) {
+        guard token == generation else { return }
+        guard ProcessInfo.processInfo.systemUptime < validUntil else {
+            cancelClose(hit.application, reason: .expired)
+            return
+        }
+        let allowHidden = !force && hit.allowsApplicationHide && self.allowsHiddenClose(hit.application)
+        guard self.isEligible(hit.application, allowsVerifiedHiddenClose: allowHidden) else {
+            if hit.application.isHidden { self.cancelClose(hit.application, reason: .applicationHidden) }
+            else { self.invalidate() }
+            return
+        }
+        if force {
+            self.requestQuit(hit.application, force: true, generation: token, validUntil: validUntil)
+        } else {
+            self.worker.prepareObservation(hit: hit, generation: token, onChange: { [weak self] reason in
+                guard let self, self.generation == token else { return }
+                self.cancelClose(hit.application, reason: reason)
+            }) { [weak self] observation in
+                guard let self, self.generation == token else { return }
+                guard ProcessInfo.processInfo.systemUptime < validUntil else {
+                    self.cancelClose(hit.application, reason: .expired)
+                    return
+                }
+                guard let observation else {
+                    self.model.record("Skipped quit for \(hit.application.localizedName ?? "the app"): window observation is unavailable.")
+                    self.invalidate()
+                    return
+                }
+                self.windowObservation = observation
+                observation.start()
+                self.worker.confirm(hit: hit, behavior: self.model.behavior, generation: token) { [weak self] decision, checkedAt, confirmedHidden in
+                    guard let self, self.generation == token else { return }
+                    switch decision {
+                    case .quit:
+                        // Even a fresh click must not use an old snapshot after the UI queue stalls.
+                        self.requestQuit(hit.application, force: false, generation: token,
+                                         validUntil: min(validUntil, checkedAt + 0.25),
+                                         confirmedHidden: confirmedHidden)
+                    case .cancel(let reason):
                         self.cancelClose(hit.application, reason: reason)
-                    }) { [weak self] observation in
-                        guard let self, self.generation == token else { return }
-                        guard ProcessInfo.processInfo.systemUptime < validUntil else {
-                            self.cancelClose(hit.application, reason: .expired)
-                            return
-                        }
-                        guard let observation else {
-                            self.model.record("Skipped quit for \(hit.application.localizedName ?? "the app"): window observation is unavailable.")
-                            self.invalidate()
-                            return
-                        }
-                        self.windowObservation = observation
-                        observation.start()
-                        self.worker.confirm(hit: hit, behavior: self.model.behavior, generation: token) { [weak self] decision, checkedAt in
-                            guard let self, self.generation == token else { return }
-                            switch decision {
-                            case .quit:
-                                // Even a fresh click must not use an old snapshot after the UI queue stalls.
-                                self.requestQuit(hit.application, force: false, generation: token,
-                                                 validUntil: min(validUntil, checkedAt + 0.25))
-                            case .cancel(let reason):
-                                self.cancelClose(hit.application, reason: reason)
-                            case .wait: break
-                            }
-                        }
+                    case .wait: break
                     }
                 }
             }
-        default: break
         }
     }
 
@@ -238,7 +324,7 @@ final class CloseMonitor {
         return (window[kCGWindowOwnerPID as String] as? NSNumber)?.int64Value
     }
 
-    private func isEligible(_ app: NSRunningApplication) -> Bool {
+    private func isEligible(_ app: NSRunningApplication, allowsVerifiedHiddenClose: Bool = false) -> Bool {
         model.enabled && model.accessibilityGranted && AXIsProcessTrusted() && model.monitorRunning &&
         AppProtection.isEligible(bundleIdentifier: app.bundleIdentifier,
                                  processID: app.processIdentifier,
@@ -246,7 +332,8 @@ final class CloseMonitor {
                                  isTerminated: app.isTerminated, isHidden: app.isHidden,
                                  isRegular: app.activationPolicy == .regular,
                                  isFinishedLaunching: app.isFinishedLaunching,
-                                 isExcluded: app.bundleIdentifier.map { model.isExcluded($0) } ?? true)
+                                 isExcluded: app.bundleIdentifier.map { model.isExcluded($0) } ?? true,
+                                 allowsVerifiedHiddenClose: allowsVerifiedHiddenClose)
     }
 
     private func cancelClose(_ app: NSRunningApplication, reason: CloseCancellationReason) {
@@ -254,13 +341,19 @@ final class CloseMonitor {
         invalidate()
     }
 
-    private func requestQuit(_ app: NSRunningApplication, force: Bool, generation token: UInt64, validUntil: TimeInterval) {
+    private func requestQuit(_ app: NSRunningApplication, force: Bool, generation token: UInt64,
+                             validUntil: TimeInterval, confirmedHidden: Bool = false) {
         guard token == generation else { return }
         guard ProcessInfo.processInfo.systemUptime < validUntil else {
             cancelClose(app, reason: .expired)
             return
         }
-        guard isEligible(app), !force || model.forceQuitEnabled else { invalidate(); return }
+        // Recheck the confirmed state and transition evidence immediately before graceful quit.
+        // Force quit never receives the hidden-app exception.
+        if !force && app.isHidden != confirmedHidden { cancelClose(app, reason: .windowSetChanged); return }
+        let allowHidden = !force && confirmedHidden && allowsHiddenClose(app)
+        guard isEligible(app, allowsVerifiedHiddenClose: allowHidden), !force || model.forceQuitEnabled
+        else { invalidate(); return }
         invalidate() // One request per click. A rejected/canceled graceful quit is never retried.
         let name = app.localizedName ?? "Application"
         let sent = force ? app.forceTerminate() : app.terminate()
@@ -280,6 +373,7 @@ extension CloseCancellationReason {
         case .expired: "the close attempt expired before it could be confirmed"
         case .invalidTiming: "the close timing could not be verified"
         case .alreadyFinished: "the close attempt had already finished"
+        case .applicationHidden: "an application was hidden without a verified hide-on-close confirmation"
         }
     }
 }
@@ -317,10 +411,11 @@ private final class CloseWorker {
     }
 
     func confirm(hit: AccessibilityClient.Hit, behavior: CloseBehavior, generation: UInt64,
-                 completion: @escaping @MainActor (CloseDecision, TimeInterval) -> Void) {
+                 completion: @escaping @MainActor (CloseDecision, TimeInterval, Bool) -> Void) {
         queue.async {
             guard self.generation == generation else { return }
-            let session = CloseSession(behavior: behavior, startedAt: ProcessInfo.processInfo.systemUptime)
+            let session = CloseSession(behavior: behavior, startedAt: ProcessInfo.processInfo.systemUptime,
+                                       allowsApplicationHide: hit.allowsApplicationHide)
             self.poll(hit: hit, session: session, generation: generation, completion: completion)
         }
     }
@@ -336,7 +431,7 @@ private final class CloseWorker {
     }
 
     private func poll(hit: AccessibilityClient.Hit, session: CloseSession, generation: UInt64,
-                      completion: @escaping @MainActor (CloseDecision, TimeInterval) -> Void) {
+                      completion: @escaping @MainActor (CloseDecision, TimeInterval, Bool) -> Void) {
         guard self.generation == generation else { return }
         var session = session
         let snapshot = client.snapshot(for: hit)
@@ -344,7 +439,7 @@ private final class CloseWorker {
         let decision = session.evaluate(snapshot: snapshot, now: checkedAt)
         switch decision {
         case .quit, .cancel:
-            DispatchQueue.main.async { completion(decision, checkedAt) }
+            DispatchQueue.main.async { completion(decision, checkedAt, snapshot.applicationHidden) }
         case .wait:
             // Schedule from completion, so slow AX reads never build up a backlog of overdue polls.
             queue.asyncAfter(deadline: .now() + 0.1) {
