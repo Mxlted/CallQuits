@@ -1,26 +1,31 @@
 name: Build and test
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Show toolchain
         run: swift --version
       - name: Test safety policy
         run: swift test
       - name: Build app bundle
         run: ./scripts/build.sh
-      - name: Check whitespace
-        run: git diff --check
       - name: Package app with executable permissions
+        if: github.event_name == 'workflow_dispatch'
         run: ditto -c -k --sequesterRsrc --keepParent build/CallQuits.app build/CallQuits.zip
       - name: Upload local build
-        uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
         with:
           name: CallQuits-local-build
           path: build/CallQuits.zip
