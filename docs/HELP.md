@@ -4,9 +4,9 @@
 
 ## macOS blocks the app
 
-Version 0.1.3 is Developer ID signed and notarized by Apple, with its notarization ticket attached to the app. Move it to Applications and open it normally. macOS may ask you to confirm that you want to open an app downloaded from the internet.
+The current release is Developer ID signed and notarized by Apple, with notarization tickets attached to the app and disk image. Open the DMG, drag CallQuits into its Applications shortcut, eject the disk image, and open CallQuits from Applications. macOS may ask you to confirm that you want to open an app downloaded from the internet.
 
-If macOS instead reports an unverified developer, a damaged app, or another security problem, check that you downloaded the current ZIP from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases) and [verify the archive](#verify-your-download). Download a fresh copy if needed. If the warning persists, report the exact message rather than bypassing it.
+If macOS instead reports an unverified developer, a damaged app, or another security problem, check that you downloaded the current DMG from [Mxlted/CallQuits Releases](https://github.com/Mxlted/CallQuits/releases) and [verify the download](#verify-your-download). Download a fresh copy if needed. If the warning persists, report the exact message rather than bypassing it.
 
 Older v0.1.0 downloads and default local development builds are ad hoc signed and not notarized. Use the current public release for normal installation. See [Apple's first-launch guidance](https://support.apple.com/en-us/102445) for an explanation of macOS security prompts.
 
@@ -56,22 +56,22 @@ Enable launch at login in CallQuits settings after moving it to Applications. ma
 
 CallQuits has no automatic updater.
 
-1. Download the new ZIP from [Releases](https://github.com/Mxlted/CallQuits/releases).
+1. Download the new DMG from [Releases](https://github.com/Mxlted/CallQuits/releases).
 2. Quit CallQuits from its menu bar menu.
-3. Extract the ZIP and replace the old app in Applications.
-4. Open it and check its permission status. If needed, [refresh the Accessibility entry](#permission-is-enabled-but-callquits-still-reports-no-access).
+3. Open the DMG and drag CallQuits into its Applications shortcut, replacing the old app when Finder asks.
+4. Eject the disk image, open CallQuits from Applications, and check its permission status. If needed, [refresh the Accessibility entry](#permission-is-enabled-but-callquits-still-reports-no-access).
 
 When upgrading from v0.1.0, the signing identity changes. Do not assume its old Accessibility grant will carry over; check that CallQuits reports monitoring is active before using it.
 
 ## Verify your download
 
-Download the release ZIP and its `SHA256SUMS.txt` from the **same release** into one folder. In Terminal, switch to that folder and run:
+Download the release DMG and its `SHA256SUMS.txt` from the **same release** into one folder. In Terminal, switch to that folder and run:
 
 ```sh
 shasum -a 256 -c SHA256SUMS.txt
 ```
 
-The ZIP should be reported as `OK`. A matching checksum confirms that its contents match the published archive. The v0.1.3 app also carries a Developer ID signature and a stapled Apple notarization ticket; the checksum is a separate integrity check.
+The DMG should be reported as `OK`. A matching checksum confirms that its contents match the published disk image. The app and disk image also carry Developer ID signatures and stapled Apple notarization tickets; the checksum is a separate integrity check. Earlier releases distributed as ZIPs keep their original assets and checksums.
 
 ## Remove CallQuits
 
