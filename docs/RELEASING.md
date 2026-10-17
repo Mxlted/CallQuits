@@ -62,7 +62,7 @@ Inspect `build/app-notary-log.json`, including any warnings. If a submission is 
 
 ## Create, notarize, and staple the DMG
 
-The packaging script copies the already signed and stapled app, adds an Applications shortcut, creates a compressed read-only HFS+ disk image, and signs the DMG with `CODE_SIGN_IDENTITY`. It never rebuilds or modifies the source app and refuses to replace an existing output. An `APP_BUNDLE_PATH` override can select a bundle outside `build/`.
+The packaging script copies the already signed and stapled app, adds an Applications shortcut, creates a compressed read-only HFS+ disk image, and signs the DMG with `CODE_SIGN_IDENTITY`. It never rebuilds or modifies the source app and refuses to replace an existing output. An `APP_BUNDLE_PATH` override can select a bundle outside `build/`. The `DMG_OUTPUT_PATH` parent directory must already exist and must be outside the source app, including after resolving symlinks.
 
 ```sh
 APP_BUNDLE_PATH="$APP" DMG_OUTPUT_PATH="$DELIVERY_DMG" ./scripts/package-dmg.sh
