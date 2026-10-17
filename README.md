@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/badge/release-v0.1.3-ef6559?style=flat-square" alt="Release v0.1.3"></a>
+  <a href="https://github.com/Mxlted/CallQuits/releases/latest"><img src="https://img.shields.io/badge/release-v0.1.4-ef6559?style=flat-square" alt="Release v0.1.4"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-303f46?style=flat-square" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/Download-Apple%20silicon-303f46?style=flat-square" alt="Download for Apple silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-303f46?style=flat-square" alt="MIT license"></a>
@@ -42,10 +42,10 @@ On macOS, closing a window often leaves the app running. CallQuits lives in your
 **Requires macOS 14 or later.** The current download is for **Apple silicon (M-series Macs)**. Intel users can try a [source build](docs/DEVELOPMENT.md); Intel runtime behavior has not yet been tested.
 
 > [!IMPORTANT]
-> **Early release:** v0.1.3 is **Developer ID signed and notarized by Apple**. Compatibility testing across apps and macOS versions, including runtime checks on macOS 14, is still in progress. See the [release notes](docs/releases/v0.1.3.md) for validation and limitations.
+> **Early release:** v0.1.4 is **Developer ID signed and notarized by Apple**. Compatibility testing across apps and macOS versions, including runtime checks on macOS 14, is still in progress. See the [release notes](docs/releases/v0.1.4.md) for validation and limitations.
 
-1. **[Download CallQuits](https://github.com/Mxlted/CallQuits/releases/latest)** — choose the `CallQuits-0.1.3-macos-arm64.zip` file under **Assets** and open it.
-2. **Move CallQuits.app to Applications**, then open it.
+1. **[Download CallQuits](https://github.com/Mxlted/CallQuits/releases/latest)** — choose the `CallQuits-0.1.4-macos-arm64.dmg` file under **Assets** and open it.
+2. **Drag CallQuits.app to Applications** using the shortcut in the disk image. Eject the disk image, then open CallQuits from Applications.
 3. **Allow Accessibility access** in System Settings → Privacy & Security → Accessibility. Enable CallQuits, then reopen it if the permission status has not updated.
 4. **Look for the × in a circle in your menu bar.** Open its settings to see CallQuits' status, choose your exceptions, or enable launch at login.
 
