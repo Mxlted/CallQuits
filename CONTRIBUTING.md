@@ -6,6 +6,8 @@ Use macOS 14 or newer and Swift 5.9 or newer. Keep third-party runtime dependenc
 
 ## Working locally
 
+See the [development guide](docs/DEVELOPMENT.md) for source builds, Xcode setup, and icon generation.
+
 ```sh
 swift test
 ./scripts/build.sh
