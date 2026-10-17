@@ -15,7 +15,8 @@ public enum CloseGestureAction: Equatable, Sendable {
 /// Validates the pointer sequence independently of Accessibility and AppKit.
 ///
 /// The integration must positively identify the actual close button and compare its application's
-/// PID with the event's target PID. If the native event provides no target PID, skip the gesture.
+/// PID with the verified event identity. When the native PID is missing, verified ownership of
+/// the exact event-stamped window is supported; never substitute the frontmost application.
 /// Store this value only for the current press; discard it on release, an invalid drag, or cancellation.
 public struct CloseGesture: Sendable {
     public static let maximumMovement: Double = 4

@@ -12,7 +12,6 @@ final class AccessibilityClient {
         let window: AXUIElement
         let initialWindows: [AXUIElement]
         let buttonFrame: CGRect
-        let capturedAt: TimeInterval
     }
 
     private enum ReadError: Error { case unavailable, unexpectedValue, exceededBudget }
@@ -60,8 +59,7 @@ final class AccessibilityClient {
             let windows = try windows(appElement)
             guard windows.contains(where: { CFEqual($0, window) }) else { return nil }
             return Hit(application: app, appElement: appElement, window: window,
-                       initialWindows: windows, buttonFrame: frame,
-                       capturedAt: ProcessInfo.processInfo.systemUptime)
+                       initialWindows: windows, buttonFrame: frame)
         } catch { return nil }
     }
 
