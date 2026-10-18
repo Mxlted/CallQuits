@@ -560,3 +560,158 @@ final class CloseControlCaptureTests: XCTestCase {
         XCTAssertTrue(fixture.operations.isEmpty)
     }
 }
+
+final class AdditionalCloseCaptureTests: XCTestCase {
+    private final class Fixture {
+        let pid: pid_t = 720_001
+        let window = AXUIElementCreateApplication(720_001)
+        let button = AXUIElementCreateApplication(720_002)
+        let tab = AXUIElementCreateApplication(720_003)
+        let group = AXUIElementCreateApplication(720_004)
+        let redButton = AXUIElementCreateApplication(720_005)
+        let webArea = AXUIElementCreateApplication(720_006)
+        let sheet = AXUIElementCreateApplication(720_007)
+        var label = "Close"
+        var tabRole = kAXRadioButtonRole
+        var groupRole = kAXTabGroupRole
+        var officialTabButton = false
+        var tabCloseValue: CFTypeRef?
+        var webContent = false
+        var enabled = true
+        var blocking = false
+        var minimized = false
+        var empty = false
+        var focusedWindow: AXUIElement?
+        var attributeError: AXError?
+        var buttonReads = 0
+        var beforeFinalButtonRead: (() -> Void)?
+        var attributeNames: [(AXUIElement, String)] = []
+        let point = CGPoint(x: 105, y: 105)
+
+        func client() -> AccessibilityClient {
+            AccessibilityClient(readAttribute: { [self] element, attribute in
+                let name = attribute as String
+                attributeNames.append((element, name))
+                if let attributeError { return (attributeError, nil) }
+                if CFEqual(element, window) {
+                    switch name {
+                    case kAXWindowsAttribute: return (.success, (empty ? [] : [window]) as NSArray)
+                    case kAXFocusedWindowAttribute: return (.success, focusedWindow ?? window)
+                    default: break
+                    }
+                }
+                if CFEqual(element, button) {
+                    switch name {
+                    case kAXRoleAttribute: return (.success, kAXButtonRole as CFString)
+                    case kAXParentAttribute: return (.success, tab)
+                    case kAXWindowAttribute: return (.success, window)
+                    case kAXTitleAttribute: return (.success, label as CFString)
+                    default: break
+                    }
+                }
+                if CFEqual(element, tab) {
+                    switch name {
+                    case kAXRoleAttribute: return (.success, tabRole as CFString)
+                    case kAXParentAttribute: return (.success, group)
+                    case kAXCloseButtonAttribute where tabCloseValue != nil: return (.success, tabCloseValue)
+                    case kAXCloseButtonAttribute where officialTabButton: return (.success, button)
+                    default: break
+                    }
+                }
+                if CFEqual(element, group) {
+                    if name == kAXRoleAttribute { return (.success, groupRole as CFString) }
+                    if name == kAXParentAttribute { return (.success, webContent ? webArea : window) }
+                }
+                if CFEqual(element, webArea), name == kAXRoleAttribute { return (.success, "AXWebArea" as CFString) }
+                if CFEqual(element, sheet), name == kAXRoleAttribute { return (.success, kAXSheetRole as CFString) }
+                return (.attributeUnsupported, nil)
+            }, readAttributes: { [self] element, attributes in
+                if let attributeError { return (attributeError, nil) }
+                if CFEqual(element, window) {
+                    let last: CFTypeRef = attributes.last == kAXMinimizedAttribute
+                        ? (minimized ? kCFBooleanTrue! : kCFBooleanFalse!) : redButton
+                    return (.success, [kAXWindowRole as CFString, kAXStandardWindowSubrole as CFString,
+                                       kCFBooleanFalse, (blocking ? [sheet] : []) as NSArray, last])
+                }
+                if CFEqual(element, button) {
+                    buttonReads += 1
+                    beforeFinalButtonRead?()
+                    var origin = CGPoint(x: 100, y: 100)
+                    var size = CGSize(width: 14, height: 14)
+                    return (.success, [kAXButtonRole as CFString, enabled ? kCFBooleanTrue! : kCFBooleanFalse!,
+                                       AXValueCreate(.cgPoint, &origin)!, AXValueCreate(.cgSize, &size)!])
+                }
+                return (.failure, nil)
+            }, findElement: { [self] _, _ in (.success, button) })
+        }
+
+        func captureTab(includingTabs: Bool = true, targetPID: pid_t? = nil) -> AccessibilityClient.CloseControl? {
+            client().captureCloseControl(at: point, eventTime: ProcessInfo.processInfo.systemUptime,
+                                         targetPID: targetPID ?? pid, includingTabs: includingTabs)
+        }
+
+        func captureShortcut() -> AccessibilityClient.CloseControl? {
+            client().captureShortcutWindow(eventTime: ProcessInfo.processInfo.systemUptime, targetPID: pid)
+        }
+    }
+
+    func testTabProofKeepsWindowMembershipThroughImmediateNativeClose() throws {
+        let fixture = Fixture()
+        fixture.beforeFinalButtonRead = { fixture.empty = true }
+        let control = try XCTUnwrap(fixture.captureTab())
+        XCTAssertEqual(control.trigger, .tabButton)
+        XCTAssertTrue(CFEqual(control.window, fixture.window))
+        XCTAssertEqual(control.initialWindows.count, 1)
+        XCTAssertEqual(fixture.buttonReads, 1)
+        XCTAssertTrue(fixture.empty)
+        XCTAssertFalse(fixture.attributeNames.contains { CFEqual($0.0, fixture.tab) && $0.1 == kAXTitleAttribute },
+                       "never read a tab's title")
+    }
+
+    func testOfficialTabCloseAttributeWorksWithoutAnEnglishLabel() throws {
+        let fixture = Fixture()
+        fixture.officialTabButton = true
+        fixture.label = "Fermer"
+        XCTAssertEqual(try XCTUnwrap(fixture.captureTab()).trigger, .tabButton)
+    }
+
+    func testTabCaptureRejectsOrdinaryButtonsWebTabsUnknownLabelsAndDisabledControls() {
+        let mutations: [(Fixture) -> Void] = [
+            { $0.tabRole = kAXGroupRole }, { $0.groupRole = kAXGroupRole },
+            { $0.webContent = true }, { $0.label = "Mute" }, { $0.label = "x" },
+            { $0.label = "Fermer" }, { $0.enabled = false }, { $0.blocking = true },
+            { $0.empty = true }, { $0.attributeError = .cannotComplete }
+        ]
+        for mutate in mutations {
+            let fixture = Fixture()
+            mutate(fixture)
+            XCTAssertNil(fixture.captureTab())
+        }
+        XCTAssertNil(Fixture().captureTab(includingTabs: false))
+        XCTAssertNil(Fixture().captureTab(targetPID: 720_010))
+    }
+
+    func testTabLabelCannotOverrideAConflictingOrMalformedOfficialCloseButton() {
+        let fixture = Fixture()
+        fixture.tabCloseValue = fixture.redButton
+        XCTAssertNil(fixture.captureTab())
+        fixture.tabCloseValue = "not a control" as CFString
+        XCTAssertNil(fixture.captureTab())
+    }
+
+    func testShortcutRequiresFocusedOwnedLiveUnblockedWindow() throws {
+        let fixture = Fixture()
+        let control = try XCTUnwrap(fixture.captureShortcut())
+        XCTAssertEqual(control.trigger, .keyboardShortcut)
+        XCTAssertTrue(CFEqual(control.window, fixture.window))
+        let mutations: [(Fixture) -> Void] = [
+            { $0.empty = true }, { $0.focusedWindow = $0.webArea }, { $0.blocking = true },
+            { $0.minimized = true }, { $0.attributeError = .cannotComplete }
+        ]
+        for mutate in mutations {
+            let invalid = Fixture()
+            mutate(invalid)
+            XCTAssertNil(invalid.captureShortcut())
+        }
+    }
+}

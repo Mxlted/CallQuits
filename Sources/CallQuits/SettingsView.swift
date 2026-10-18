@@ -204,6 +204,11 @@ struct SettingsView: View {
         }
 
         SettingsCard {
+            SettingRow(symbol: "rectangle.on.rectangle", title: "Close tabs and use ⌘W",
+                       detail: "Also quit when a supported tab-close button or ⌘W closes the last window. Always uses normal quit.") {
+                Toggle("Close tabs and use ⌘W", isOn: $model.additionalCloseMethods).labelsHidden().toggleStyle(.switch)
+            }
+            Divider()
             SettingRow(symbol: "bolt", title: "Shift-click to force quit", detail: "An optional escape hatch. Unsaved work can be lost.") {
                 Toggle("Shift-click to force quit", isOn: Binding(
                     get: { model.forceQuitEnabled },
@@ -223,7 +228,7 @@ struct SettingsView: View {
 
         VStack(alignment: .leading, spacing: 6) {
             Label("Hold Option while clicking to bypass CallQuits.", systemImage: "option")
-            Text("Command- and Control-clicks are left alone. Keyboard shortcuts stay unchanged. If a close is canceled or a dialog appears, CallQuits steps aside.")
+            Text("Command- and Control-clicks are left alone. If a close is canceled or a dialog appears, CallQuits steps aside. Tabs and ⌘W never use any-window or force quit.")
             if model.forceQuitEnabled {
                 Text("Force quit needs a verified close button. For an unresponsive app, use macOS Force Quit if Shift-click cannot detect it.")
             }

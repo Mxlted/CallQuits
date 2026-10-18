@@ -58,7 +58,7 @@ Follow [release preparation](RELEASING.md) to select the Developer ID identity *
 open "build/CallQuits Fixture.app"
 ```
 
-The fixture deliberately remains running after its last window closes. Its documents are memory-only and it never reads or writes personal files. Relaunch it between quit cases. Its File menu can create a window even when all previous windows are closed. Use its checkboxes to simulate unsaved changes or a replacement window, and its button to show a blocking sheet.
+The fixture deliberately remains running after its last window closes. Its native tab group has a Close button; New Tab or ⌘T adds an in-memory tab, and ⌘W closes one tab before closing the window when the last tab is removed. Its documents are memory-only and it never reads or writes personal files. Relaunch it between quit cases. Its File menu can create a window even when all previous windows are closed. Use its checkboxes to simulate unsaved changes or a replacement window, and its button to show a blocking sheet.
 
 The **Hide application instead of closing** checkbox reproduces retained-window behavior for native/AX inspection. Dirty-close and blocking-sheet handling run first. The fixture logs lifecycle timestamps to stdout without window titles or document content. Its bundle identity is not Discord, so production CallQuits must continue rejecting its hidden state; testing the Discord-specific snapshot policy in isolation requires an explicitly injected qualification, not a spoofed bundle identifier.
 
@@ -74,7 +74,13 @@ Enable CallQuits and grant its Accessibility permission before live checks. Conf
 | Two windows; minimize one, close the other | App remains. |
 | Two windows on different Spaces; close the visible one | App remains. |
 | Fullscreen window in another Space | It still counts; closing another window does not quit the app. |
-| Close the last window with ⌘W or File → Close Window | App remains; no verified red-button intent. |
+| Close the last window with ⌘W, additional close methods enabled | Graceful quit after confirming the window closed; native recipient must match the captured application. |
+| Close a tab with ⌘W while its window remains | App remains, including in any-window mode. |
+| Click the native tab-close button on the last tab | Graceful quit only if the last window closes; sheets and replacements cancel. |
+| Close with additional close methods disabled, a menu command, or a programmatic close | Only verified red clicks can request quit. |
+| Shift-click a tab-close button, or press ⌘⇧W / ⌘⌥W / repeated ⌘W | Native behavior; no new automatic quit intent. |
+| Type ⌘W on another keyboard layout, or with missing native PID | Match the resolved W character; never use a fixed physical key or guess the recipient. |
+| Close several tabs with successive ⌘W presses | Remaining tabs keep the window/app open; the final close can quit without switching apps. |
 | Click yellow or green button, title bar, or toolbar control | No quit request. |
 | Press red button, drag away, release | No quit request. Test drag away and back as well. |
 | Option-, Command-, or Control-click red button | App's native modifier behavior; no CallQuits quit request. |
@@ -203,3 +209,34 @@ Version 0.1.4, build 5, was built in `build/releases/0.1.4/` with Developer ID A
 Apple accepted app submission `7e1d2757-b9a7-438d-abf3-6a05945222d2` and DMG submission `ede5f73f-3845-4266-99cb-90ef5bf09d05`; both logs reported no issues. The app was stapled before packaging. The signed DMG contains that app and an Applications shortcut, and its own ticket was stapled after acceptance. Strict signatures, both tickets, `hdiutil verify`, and the final checksum passed. A read-only mount and fresh app copy preserved the executable, signature, and ticket; the copied executable matched the original SHA-256. `syspolicy_check distribution` passed for both the original and copied app. `spctl` reported `override=security disabled`, so default Gatekeeper enforcement was not established and no system security settings were changed.
 
 The final DMG SHA-256 is `a96c6de6ef4ac9b5bca831d401b8a8104db75c1d285003e69d49a87b28bb7f62`. Public releases now deliver the DMG and checksum; the private app-submission ZIP is not a public asset. Physical editor verification, the full live matrix, macOS 14/Intel runtime, and installation/upgrade on a separate Mac/account remain incomplete. The document fixture above tests the production source and native document lifecycle, not a physical click through the final signed app.
+
+## Tabs and shortcuts development checks — October 18, 2026
+
+Source builds add **Close tabs and use ⌘W**, enabled by default. It is independent of the red button's any-window mode and force-quit opt-in. The v0.1.4 download does not include this change.
+
+Debug XCTest and the release app-bundle/signature build passed. New cases cover native tab ancestry versus web controls, conflicting official close-button identity, disabled/unknown/localized controls, close-time window disappearance, focused-window ownership, sheets, minimized targets, layout-resolved shortcut matching, repeats and modifiers, identity/freshness boundaries, preference persistence, and last-window/graceful-only routing.
+
+A fixture-only monitor was compiled from the current integration and policy sources on arm64 macOS 27.0.1 (26A434). Its only behavior restriction was an additional eligibility allowlist for `app.callquits.Fixture`; temporary instrumentation recorded verified input timestamps and decisions. The fixture contained disposable in-memory tabs and documents. External Accessibility permission and the native event tap were available. Computer-use input reached the tap for the measured cases; this does not establish physical input behavior.
+
+| Scenario | Observation |
+| --- | --- |
+| ⌘W with two tabs | One tab closed; the window and app remained. |
+| Subsequent ⌘W on the last tab | Normal quit requested without switching apps; process exited. |
+| Native tab Close button, last tab | Normal quit requested; process exited. |
+| Unsaved document, ⌘W, Cancel | Save sheet appeared; the pending quit ended and the document stayed open. |
+| Replacement window after ⌘W | New window remained; no quit request. |
+| Two windows, including a minimized-window case | App remained. These trials conservatively rejected an unreliable AX snapshot rather than demonstrating complete enumeration of the surviving window. |
+| Automated red-button close | One trial canceled on a creation notification; later title-bar interactions were not reproducible. Physical red-button checks remain required; its policy/capture regression tests passed. |
+
+Representative verified-input measurements used the native event timestamp, the monitor's return from `terminate()`, and a parent process's observation of fixture exit, all aligned to `mach_absolute_time`. Native application close/save behavior was retained.
+
+| Input | Quit request | Process exit |
+| --- | ---: | ---: |
+| ⌘W | 322 ms | 330 ms |
+| Tab-close click | 236 ms | 239 ms |
+
+These are individual fixture trials, not latency guarantees or a statistical benchmark. Visible Dock-indicator disappearance was not measured. The reference implementation's roughly 1.55-second minimum is derived from its code (350 ms first check plus 1.2 s confirmation), not a side-by-side runtime measurement. CallQuits keeps its existing 150 ms stable confirmation and 200 ms minimum session duration.
+
+The live trials justified preparing the active window before ⌘W: immediate post-key capture could lose the window entirely. They also exposed a snapshot racing native close, so shortcut checks use a destroy-notification wakeup with a 100 ms fallback on providers that retain closed window objects. Idle observations cannot request quit. Ordinary red-button clicks retain their existing capture and observation path.
+
+Chrome's native AX tree was inspected read-only and exposed a Close button inside a tab inside a tab group. No real browser was used as a termination target. Cross-browser behavior, unsupported localized labels, alternate keyboard layouts with physical input, other Spaces/fullscreen, macOS 14/Intel runtime, and the rest of the live matrix remain unverified. Raw fixture harnesses and logs are local under the ignored `build/close-methods-probe/` directory. The reference `vorssaint-utils/` directory was read only.

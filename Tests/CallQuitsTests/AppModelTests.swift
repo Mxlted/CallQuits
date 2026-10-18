@@ -117,6 +117,24 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(makeModel().activity.isEmpty, "a new session starts empty")
     }
 
+    @MainActor
+    func testAdditionalCloseMethodsPersistAndInvalidatePendingDecisions() async {
+        let suite = "CallQuitsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(defaults: defaults, readAccessibility: { true }, readLoginStatus: { .notRegistered })
+        XCTAssertTrue(model.additionalCloseMethods)
+        var changes = 0
+        model.onConfigurationChange = { changes += 1 }
+        model.additionalCloseMethods = false
+        model.additionalCloseMethods = false
+        XCTAssertEqual(changes, 1)
+        let restored = AppModel(defaults: defaults, readAccessibility: { true }, readLoginStatus: { .notRegistered })
+        XCTAssertFalse(restored.additionalCloseMethods)
+        XCTAssertEqual(restored.behavior, .lastWindow)
+        XCTAssertFalse(restored.forceQuitEnabled)
+    }
+
     func testTimeoutRecoveryIsBoundedAndRespectsDisabledOrUntrustedState() {
         var recovery = TapRecovery()
         XCTAssertFalse(recovery.shouldRetry(enabled: false, trusted: true), "intentional pause")

@@ -30,6 +30,8 @@
 
 On macOS, closing a window often leaves the app running. CallQuits lives in your menu bar and asks an app to quit after you click the red button on its last window. The app still handles its own close and save prompts.
 
+Source builds also support **⌘W and native tab-close buttons** through **Settings → Behavior → Close tabs and use ⌘W**. These methods quit only after the last window closes. This addition is not in the v0.1.4 download yet; see the [development checks](docs/TESTING.md#tabs-and-shortcuts-development-checks--october-18-2026).
+
 ## Why CallQuits?
 
 - **Less left running.** Quit an app after its last window closes, or choose the optional any-window mode.
@@ -61,7 +63,8 @@ Accessibility lets CallQuits identify the close button and check an app's window
 | Normally close Discord's sole window (not minimized) | Requests a normal quit after confirming Discord hid the window safely. Shift is not required. |
 | Close one of several windows | Keeps the app running by default. Minimized windows and windows on other Spaces count too. |
 | Cancel a close, encounter a save dialog, or open a replacement window | Cancels the pending automatic quit. |
-| Press ⌘W, use a menu, or hold Option, Command, or Control while clicking | Leaves the app's usual behavior alone. |
+| Press ⌘W or click a supported tab-close button (source builds) | With the additional close methods enabled, requests normal quit only if the last window closes. A remaining tab or empty browser window keeps the app open. |
+| Use a menu, or hold Option, Command, or Control while clicking | Leaves the app's usual behavior alone. |
 | Close an excluded app | Leaves its usual behavior alone. Finder, system processes, and CallQuits are always protected. |
 
 **Need force quit?** You can enable Shift-click force quit in settings. It is off by default, requires accepting an unsaved-work warning, and still respects exclusions. It can discard unsaved work in every window. A normal close never escalates to force quit.
@@ -78,7 +81,7 @@ It may be excluded, have another window open, or be showing a save dialog. Some 
 <details>
 <summary><strong>Will it keep asking to quit after I dismiss a save dialog?</strong></summary>
 
-No. A save dialog cancels that automatic quit attempt, even if you later choose Save or Don't Save. CallQuits waits for a new close-button click.
+No. A save dialog cancels that automatic quit attempt, even if you later choose Save or Don't Save. CallQuits waits for a fresh supported close action.
 
 </details>
 

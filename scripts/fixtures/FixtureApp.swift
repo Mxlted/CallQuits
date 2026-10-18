@@ -23,7 +23,11 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         let newItem = fileMenu.addItem(withTitle: "New Window", action: #selector(newWindow), keyEquivalent: "n")
         newItem.target = self
-        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let newTab = fileMenu.addItem(withTitle: "New Tab", action: #selector(newTab), keyEquivalent: "t")
+        newTab.target = self
+        let closeTab = fileMenu.addItem(withTitle: "Close Tab", action: #selector(closeTab), keyEquivalent: "w")
+        closeTab.target = self
+        fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "")
         fileItem.submenu = fileMenu
         menu.addItem(fileItem)
         NSApp.mainMenu = menu
@@ -68,6 +72,9 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         controller.window?.makeKeyAndOrderFront(nil)
         fixtureLog("window opened")
     }
+
+    @objc func newTab() { controllers.first { $0.window === NSApp.keyWindow }?.addTab() }
+    @objc func closeTab() { controllers.first { $0.window === NSApp.keyWindow }?.closeTab() }
 }
 
 final class FixtureWindowController: NSWindowController, NSWindowDelegate {
@@ -75,10 +82,12 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
     var allowCloseOnce = false
     var shouldReplace = false
     var shouldHideOnClose = false
+    private var tabCount = 1
+    private let tabLabel = NSTextField(labelWithString: "Tabs: 1")
 
     init(number: Int, owner: FixtureDelegate) {
         self.fixtureOwner = owner
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 410),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 480),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
         window.title = "Disposable document \(number)"
@@ -100,11 +109,20 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
         let sheet = NSButton(title: "Show Blocking Sheet", target: self, action: #selector(showSheet))
         let buttons = NSStackView(views: [new, sheet])
         buttons.spacing = 12
+        // Native AX tab hierarchy with a Close child, matching a browser's tab strip.
+        let tab = NSStackView(views: [tabLabel, NSButton(title: "Close", target: self, action: #selector(closeTab))])
+        tab.setAccessibilityElement(true)
+        tab.setAccessibilityRole(.radioButton)
+        let tabs = NSStackView(views: [tab])
+        tabs.setAccessibilityElement(true)
+        tabs.setAccessibilityRole(.tabGroup)
+        let tabRow = NSStackView(views: [tabs, NSButton(title: "New Tab (⌘T)", target: self, action: #selector(addTab))])
+        tabRow.spacing = 12
         let hint = NSTextField(wrappingLabelWithString:
             "Try multiple windows, minimize one, move one to another Space, cancel a save, drag away from the red button, or use ⌘W. The File menu still works when no window is open.")
         hint.font = .systemFont(ofSize: 12)
         hint.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [title, detail, dirty, replace, hide, buttons, hint])
+        let stack = NSStackView(views: [title, detail, tabRow, dirty, replace, hide, buttons, hint])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 18
@@ -115,10 +133,27 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -28),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28)
         ])
-        window.minSize = NSSize(width: 540, height: 410)
+        window.minSize = NSSize(width: 540, height: 480)
     }
 
     required init?(coder: NSCoder) { nil }
+
+    @objc func addTab() {
+        tabCount += 1
+        tabLabel.stringValue = "Tabs: \(tabCount)"
+        fixtureLog("tab opened")
+    }
+
+    @objc func closeTab() {
+        fixtureLog("tab close requested")
+        if tabCount > 1 {
+            tabCount -= 1
+            tabLabel.stringValue = "Tabs: \(tabCount)"
+            fixtureLog("tab closed; window remains")
+        } else {
+            window?.performClose(nil)
+        }
+    }
 
     @objc func toggleDirty(_ sender: NSButton) { window?.isDocumentEdited = sender.state == .on }
     @objc func toggleReplacement(_ sender: NSButton) { shouldReplace = sender.state == .on }

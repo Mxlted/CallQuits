@@ -82,6 +82,13 @@ final class AppModel: ObservableObject {
             onConfigurationChange?()
         }
     }
+    @Published var additionalCloseMethods: Bool {
+        didSet {
+            guard additionalCloseMethods != oldValue else { return }
+            defaults.set(additionalCloseMethods, forKey: "additionalCloseMethods")
+            onConfigurationChange?()
+        }
+    }
     @Published var exclusions: [AppException] {
         didSet {
             guard exclusions != oldValue else { return }
@@ -118,10 +125,12 @@ final class AppModel: ObservableObject {
         self.defaults = defaults
         self.readAccessibility = readAccessibility
         self.readLoginStatus = readLoginStatus
-        defaults.register(defaults: ["enabled": true, "quitOnAnyWindow": false, "forceQuitEnabled": false])
+        defaults.register(defaults: ["enabled": true, "quitOnAnyWindow": false, "forceQuitEnabled": false,
+                                     "additionalCloseMethods": true])
         enabled = defaults.bool(forKey: "enabled")
         behavior = defaults.bool(forKey: "quitOnAnyWindow") ? .everyWindow : .lastWindow
         forceQuitEnabled = defaults.bool(forKey: "forceQuitEnabled")
+        additionalCloseMethods = defaults.bool(forKey: "additionalCloseMethods")
         if let data = defaults.data(forKey: "excludedApplications"),
            let saved = try? JSONDecoder().decode([AppException].self, from: data) {
             exclusions = saved

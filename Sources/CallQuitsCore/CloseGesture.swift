@@ -1,5 +1,52 @@
 import Foundation
 
+/// Tabs and shortcuts may close only part of a window. They never inherit the
+/// red button's any-window or force-quit behavior.
+public enum CloseTrigger: Sendable {
+    case windowButton, tabButton, keyboardShortcut
+
+    public func behavior(configured: CloseBehavior) -> CloseBehavior {
+        self == .windowButton ? configured : .lastWindow
+    }
+
+    public var allowsForceQuit: Bool { self == .windowButton }
+}
+
+public enum CloseShortcut {
+    /// Match the layout-resolved character, not the physical QWERTY W position.
+    /// Missing text, repeats and modified shortcuts remain the application's own commands.
+    public static func matches(character: String?, command: Bool, shift: Bool,
+                               option: Bool, control: Bool, isRepeat: Bool) -> Bool {
+        command && !shift && !option && !control && !isRepeat && character?.lowercased() == "w"
+    }
+}
+
+/// Pins a shortcut request to one native recipient and a bounded capture interval.
+/// Window observation alone authorizes nothing; a matching W is mandatory.
+public struct CloseShortcutIntent: Sendable {
+    public let startedAt: TimeInterval
+    public private(set) var requestedAt: TimeInterval?
+    private let processID: Int32
+
+    public init?(processID: Int32, startedAt: TimeInterval) {
+        guard processID > 1, startedAt.isFinite, startedAt >= 0 else { return nil }
+        self.processID = processID
+        self.startedAt = startedAt
+    }
+
+    public mutating func request(processID: Int32, at timestamp: TimeInterval) -> Bool {
+        guard requestedAt == nil, processID == self.processID, timestamp.isFinite,
+              timestamp >= startedAt, timestamp - startedAt < CloseSession.maximumDuration else { return false }
+        requestedAt = timestamp
+        return true
+    }
+
+    public func isReady(at timestamp: TimeInterval) -> Bool {
+        guard let requestedAt, timestamp.isFinite, timestamp >= requestedAt else { return false }
+        return timestamp - requestedAt < 0.8
+    }
+}
+
 /// The integration maps input modifiers to these values. `.force` requires explicit opt-in.
 public enum CloseGestureModifiers: Equatable, Sendable {
     case normal

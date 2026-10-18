@@ -46,6 +46,12 @@ final class CloseMonitor {
     private var awaitingHide: (() -> Void)?
     private var windowObservation: CloseWindowObservation?
     private var tapRecovery = TapRecovery()
+    private var shortcutIntent: CloseShortcutIntent?
+    private var shortcutHit: AccessibilityClient.Hit?
+    private var shortcutReadyToCheck = false
+    private var shortcutConfirmationStarted = false
+    private var candidateGeneration: UInt64 = 0
+    private var shortcutCandidate: (hit: AccessibilityClient.Hit, observation: CloseWindowObservation, processID: pid_t, bundleIdentifier: String?)?
 
     init(model: AppModel) { self.model = model }
 
@@ -59,7 +65,7 @@ final class CloseMonitor {
                              NSWorkspace.sessionDidResignActiveNotification,
                              NSWorkspace.activeSpaceDidChangeNotification] {
             workspaceObservers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.invalidate() }
+                MainActor.assumeIsolated { self?.invalidate(replenishShortcutCandidate: false); self?.clearShortcutCandidate() }
             })
         }
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didHideApplicationNotification,
@@ -75,7 +81,20 @@ final class CloseMonitor {
                 else { self.invalidate() }
             }
         })
-        // Only checks our permission bit, never enumerates other apps or windows when idle.
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                     object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                self?.refreshShortcutCandidate(app)
+            }
+        })
+        for notification in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification,
+                             NSWorkspace.sessionDidBecomeActiveNotification] {
+            workspaceObservers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshShortcutCandidate(NSWorkspace.shared.frontmostApplication) }
+            })
+        }
+        // The timer checks only permission; window tracking is notification-driven.
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.model.refreshPermission()
@@ -86,7 +105,7 @@ final class CloseMonitor {
     }
 
     func stop() {
-        invalidate()
+        invalidate(replenishShortcutCandidate: false)
         removeMonitors()
         permissionTimer?.invalidate()
         permissionTimer = nil
@@ -98,7 +117,7 @@ final class CloseMonitor {
     }
 
     private func reconfigure() {
-        invalidate()
+        invalidate(replenishShortcutCandidate: false)
         removeMonitors()
         tapRecovery = TapRecovery()
         guard model.enabled, model.accessibilityGranted else {
@@ -117,10 +136,12 @@ final class CloseMonitor {
                     monitor.model.record("macOS paused click monitoring. Enable CallQuits to resume.")
                 } else if type == .tapDisabledByTimeout {
                     monitor.resumeAfterTimeout()
+                } else if type == .keyDown {
+                    monitor.handleKeyDown(event)
                 } else if CloseMonitorInput.interrupts(type) {
                     // Only the existence of an intervening press matters. Never inspect
                     // its contents or recipient; idle typing and secondary clicks do no work.
-                    if monitor.gesture != nil || monitor.releasePending || monitor.verifiedCloseApplication != nil {
+                    if monitor.gesture != nil || monitor.releasePending || monitor.verifiedCloseApplication != nil || monitor.shortcutIntent != nil {
                         monitor.invalidate()
                     }
                 } else { monitor.handle(type, event: event) }
@@ -144,10 +165,12 @@ final class CloseMonitor {
             return event
         }
         model.setMonitoringState(.running)
+        refreshShortcutCandidate(NSWorkspace.shared.frontmostApplication)
     }
 
     private func resumeAfterTimeout() {
-        invalidate()
+        invalidate(replenishShortcutCandidate: false)
+        clearShortcutCandidate()
         model.refreshPermission()
         guard model.enabled, model.accessibilityGranted else { return }
         guard let tap = eventMonitor,
@@ -158,15 +181,17 @@ final class CloseMonitor {
         CGEvent.tapEnable(tap: tap, enable: true)
         guard CGEvent.tapIsEnabled(tap: tap) else { monitoringFailed(); return }
         model.setMonitoringState(.running)
+        refreshShortcutCandidate(NSWorkspace.shared.frontmostApplication)
     }
 
     private func monitoringFailed() {
-        invalidate()
+        invalidate(replenishShortcutCandidate: false)
         removeMonitors()
         model.setMonitoringState(.unavailable)
     }
 
     private func removeMonitors() {
+        clearShortcutCandidate()
         if let eventSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), eventSource, .commonModes) }
         if let eventMonitor { CFMachPortInvalidate(eventMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
@@ -175,7 +200,7 @@ final class CloseMonitor {
         localMonitor = nil
     }
 
-    private func invalidate() {
+    private func invalidate(replenishShortcutCandidate: Bool = true) {
         generation &+= 1
         gesture = nil
         pressIdentity = nil
@@ -184,9 +209,163 @@ final class CloseMonitor {
         attemptApplication = nil
         verifiedCloseApplication = nil
         awaitingHide = nil
+        shortcutIntent = nil
+        shortcutHit = nil
+        shortcutReadyToCheck = false
+        shortcutConfirmationStarted = false
         windowObservation?.stop()
         windowObservation = nil
         worker.cancel(generation: generation)
+        guard replenishShortcutCandidate else { return }
+        // A shortcut consumes its cached window. Refill after the attempt ends so
+        // repeated tab closes work without switching away and back to the app.
+        let token = generation
+        DispatchQueue.main.async { [weak self] in
+            guard let self, token == self.generation, self.shortcutCandidate == nil,
+                  self.gesture == nil, !self.releasePending, self.shortcutIntent == nil,
+                  self.verifiedCloseApplication == nil else { return }
+            self.refreshShortcutCandidate(NSWorkspace.shared.frontmostApplication)
+        }
+    }
+
+    private func interruptPendingClose() {
+        if gesture != nil || releasePending || verifiedCloseApplication != nil || shortcutIntent != nil { invalidate() }
+    }
+
+    private func clearShortcutCandidate() {
+        candidateGeneration &+= 1
+        shortcutCandidate?.observation.stop()
+        shortcutCandidate = nil
+        worker.cancelCandidate(generation: candidateGeneration)
+    }
+
+    private func refreshShortcutCandidate(_ app: NSRunningApplication?) {
+        clearShortcutCandidate()
+        guard model.additionalCloseMethods, let app, isEligible(app) else { return }
+        let token = candidateGeneration
+        worker.prepareCandidate(targetPID: app.processIdentifier, generation: token, onChange: { [weak self] _ in
+            guard let self, token == self.candidateGeneration else { return }
+            self.refreshShortcutCandidate(NSWorkspace.shared.frontmostApplication)
+        }) { [weak self] candidate in
+            guard let self, token == self.candidateGeneration else { return }
+            guard let candidate, self.isEligible(app), app == candidate.hit.application,
+                  NSWorkspace.shared.frontmostApplication == app else { return }
+            self.shortcutCandidate = candidate
+            candidate.observation.start()
+        }
+    }
+
+    private func handleKeyDown(_ event: CGEvent) {
+        guard model.additionalCloseMethods, event.flags.contains(.maskCommand) else { interruptPendingClose(); return }
+        // Inspect text only for a Command chord; never retain or log keyboard contents.
+        var length = 0
+        var characters = [UniChar](repeating: 0, count: 4)
+        event.keyboardGetUnicodeString(maxStringLength: characters.count, actualStringLength: &length,
+                                       unicodeString: &characters)
+        let character = length > 0 && length <= characters.count
+            ? String(utf16CodeUnits: characters, count: length)
+            : NSEvent(cgEvent: event)?.charactersIgnoringModifiers
+        guard CloseShortcut.matches(character: character, command: true,
+                                    shift: event.flags.contains(.maskShift), option: event.flags.contains(.maskAlternate),
+                                    control: event.flags.contains(.maskControl),
+                                    isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0),
+              let identity = EventIdentity(nativeProcessID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                                           eventWindowID: 0, windowOwnerProcessID: nil) else { interruptPendingClose(); return }
+        let timestamp = TimeInterval(event.timestamp) / 1_000_000_000
+        if let candidate = shortcutCandidate, candidate.processID == identity.processID,
+           candidate.hit.application.processIdentifier == candidate.processID,
+           candidate.hit.application.bundleIdentifier == candidate.bundleIdentifier,
+           let currentApplication = NSRunningApplication(processIdentifier: identity.processID),
+           candidate.hit.application == currentApplication, isEligible(currentApplication) {
+            invalidate()
+            shortcutCandidate = nil
+            shortcutIntent = CloseShortcutIntent(processID: identity.processID, startedAt: timestamp)
+            _ = shortcutIntent?.request(processID: identity.processID, at: timestamp)
+            attemptApplication = candidate.hit.application
+            applicationVisibility = CloseApplicationVisibility(identity: identity, bundleIdentifier: candidate.hit.application.bundleIdentifier)
+            shortcutHit = candidate.hit
+            windowObservation = candidate.observation
+            let token = generation
+            let application = candidate.hit.application
+            candidate.observation.onChange = { [weak self] reason in
+                guard let self, token == self.generation, reason != .windowSetChanged else { return }
+                self.cancelClose(application, reason: reason)
+            }
+            observeShortcutDestruction(candidate.observation, token: token)
+            completeShortcutIfReady()
+        } else {
+            // Activation/AX notifications may not have supplied a usable window yet.
+            // Try a fresh capture, but never guess if it has already disappeared.
+            beginShortcutCapture(event, requestedAt: timestamp)
+        }
+        let token = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, timestamp + CloseSession.maximumDuration - ProcessInfo.processInfo.systemUptime)) { [weak self] in
+            guard let self, token == self.generation, self.shortcutIntent != nil else { return }
+            self.invalidate() // A tab may have closed normally while its window stayed open.
+        }
+    }
+
+    private func beginShortcutCapture(_ event: CGEvent, requestedAt: TimeInterval) {
+        invalidate()
+        let timestamp = TimeInterval(event.timestamp) / 1_000_000_000
+        guard let identity = EventIdentity(nativeProcessID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                                           eventWindowID: 0, windowOwnerProcessID: nil),
+              let app = NSRunningApplication(processIdentifier: identity.processID), isEligible(app) else { return }
+        let token = generation
+        shortcutIntent = CloseShortcutIntent(processID: identity.processID, startedAt: timestamp)
+        _ = shortcutIntent?.request(processID: identity.processID, at: requestedAt)
+        attemptApplication = app
+        applicationVisibility = CloseApplicationVisibility(identity: identity, bundleIdentifier: app.bundleIdentifier)
+        worker.shortcutWindow(eventTime: timestamp, targetPID: identity.processID, generation: token) { [weak self] hit in
+            guard let self, token == self.generation else { return }
+            guard let hit, self.matchesAttemptApplication(hit.application), self.isEligible(hit.application) else {
+                self.invalidate(); return
+            }
+            self.worker.prepareObservation(hit: hit, generation: token, watchFocus: true, onChange: { [weak self] reason in
+                guard let self, token == self.generation else { return }
+                // Native close changes focus and destroys the target. Only sheets and
+                // replacement windows invalidate a matched shortcut at this stage.
+                if reason == .windowSetChanged && self.shortcutIntent?.requestedAt != nil { return }
+                if let verified = self.verifiedCloseApplication { self.cancelClose(verified, reason: reason) }
+                else { self.invalidate() }
+            }) { [weak self] observation in
+                guard let self, token == self.generation else { return }
+                guard let observation else { self.invalidate(); return }
+                self.windowObservation = observation
+                self.observeShortcutDestruction(observation, token: token)
+                observation.start()
+                self.shortcutHit = hit
+                self.completeShortcutIfReady()
+            }
+        }
+    }
+
+    private func completeShortcutIfReady() {
+        guard let hit = shortcutHit, let requestedAt = shortcutIntent?.requestedAt, !shortcutConfirmationStarted else { return }
+        guard matchesAttemptApplication(hit.application), isEligible(hit.application) else { invalidate(); return }
+        if verifiedCloseApplication == nil {
+            guard shortcutIntent?.isReady(at: ProcessInfo.processInfo.systemUptime) == true else { invalidate(); return }
+            verifiedCloseApplication = hit.application
+            // Some apps retain closed NSWindows and do not promptly emit destroyed.
+            // Use the existing sampling cadence as a fallback, after native key handling.
+            let token = generation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                guard let self, token == self.generation else { return }
+                self.shortcutReadyToCheck = true
+                self.completeShortcutIfReady()
+            }
+        }
+        guard shortcutReadyToCheck else { return }
+        shortcutConfirmationStarted = true
+        startConfirmation(hit: hit, token: generation, validUntil: requestedAt + CloseSession.maximumDuration)
+    }
+
+    private func observeShortcutDestruction(_ observation: CloseWindowObservation, token: UInt64) {
+        observation.onWindowDestroyed = { [weak self] in
+            guard let self, token == self.generation else { return }
+            self.shortcutReadyToCheck = true
+            self.completeShortcutIfReady()
+        }
     }
 
     private func applicationDidHide(_ notification: Notification) {
@@ -236,7 +415,8 @@ final class CloseMonitor {
             guard gesture != nil else { return }
             applicationVisibility = CloseApplicationVisibility(identity: identity, bundleIdentifier: app.bundleIdentifier)
             attemptApplication = app
-            worker.mouseDown(point: point, eventTime: timestamp, targetPID: identity.processID, generation: generation)
+            worker.mouseDown(point: point, eventTime: timestamp, targetPID: identity.processID, generation: generation,
+                             includingTabs: model.additionalCloseMethods && intent == .normal)
         case .leftMouseDragged:
             if let gesture, !gesture.allowsDrag(toX: point.x, y: point.y) { invalidate() }
         case .leftMouseUp:
@@ -290,6 +470,7 @@ final class CloseMonitor {
             return
         }
         if force {
+            guard hit.trigger.allowsForceQuit else { invalidate(); return }
             self.requestQuit(hit.application, force: true, generation: token, validUntil: validUntil)
         } else {
             self.worker.prepareObservation(hit: hit, generation: token, onChange: { [weak self] reason in
@@ -308,19 +489,20 @@ final class CloseMonitor {
                 }
                 self.windowObservation = observation
                 observation.start()
-                self.worker.confirm(hit: hit, behavior: self.model.behavior, generation: token) { [weak self] decision, checkedAt, confirmedHidden in
-                    guard let self, self.generation == token else { return }
-                    switch decision {
-                    case .quit:
-                        // Even a fresh click must not use an old snapshot after the UI queue stalls.
-                        self.requestQuit(hit.application, force: false, generation: token,
-                                         validUntil: min(validUntil, checkedAt + 0.25),
-                                         confirmedHidden: confirmedHidden)
-                    case .cancel(let reason):
-                        self.cancelClose(hit.application, reason: reason)
-                    case .wait: break
-                    }
-                }
+                self.startConfirmation(hit: hit, token: token, validUntil: validUntil)
+            }
+        }
+    }
+
+    private func startConfirmation(hit: AccessibilityClient.Hit, token: UInt64, validUntil: TimeInterval) {
+        worker.confirm(hit: hit, behavior: hit.trigger.behavior(configured: model.behavior), generation: token) { [weak self] decision, checkedAt, confirmedHidden in
+            guard let self, self.generation == token else { return }
+            switch decision {
+            case .quit:
+                self.requestQuit(hit.application, force: false, generation: token,
+                                 validUntil: min(validUntil, checkedAt + 0.25), confirmedHidden: confirmedHidden)
+            case .cancel(let reason): self.cancelClose(hit.application, reason: reason)
+            case .wait: break
             }
         }
     }
@@ -405,16 +587,44 @@ private final class CloseWorker {
     private var generation: UInt64 = 0
     private var down: AccessibilityClient.Hit?
     private var downTime: TimeInterval = 0
+    private var candidateGeneration: UInt64 = 0
+
+    func cancelCandidate(generation: UInt64) {
+        queue.async { self.candidateGeneration = generation }
+    }
+
+    func prepareCandidate(targetPID: pid_t, generation: UInt64,
+                          onChange: @escaping @MainActor (CloseCancellationReason) -> Void,
+                          completion: @escaping @MainActor ((hit: AccessibilityClient.Hit, observation: CloseWindowObservation, processID: pid_t, bundleIdentifier: String?)?) -> Void) {
+        queue.async {
+            guard self.candidateGeneration == generation else { return }
+            guard let hit = self.client.shortcutWindow(eventTime: ProcessInfo.processInfo.systemUptime, targetPID: targetPID),
+                  let observation = CloseWindowObservation(hit: hit, watchFocus: true, onChange: onChange) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.main.async { completion((hit, observation, targetPID, hit.application.bundleIdentifier)) }
+        }
+    }
 
     func cancel(generation: UInt64) {
         queue.async { self.generation = generation; self.down = nil }
     }
 
-    func mouseDown(point: CGPoint, eventTime: TimeInterval, targetPID: pid_t, generation: UInt64) {
+    func mouseDown(point: CGPoint, eventTime: TimeInterval, targetPID: pid_t, generation: UInt64, includingTabs: Bool) {
         queue.async {
             guard self.generation == generation else { return }
             self.downTime = eventTime
-            self.down = self.client.closeButton(at: point, eventTime: eventTime, targetPID: targetPID)
+            self.down = self.client.closeButton(at: point, eventTime: eventTime, targetPID: targetPID, includingTabs: includingTabs)
+        }
+    }
+
+    func shortcutWindow(eventTime: TimeInterval, targetPID: pid_t, generation: UInt64,
+                        completion: @escaping @MainActor (AccessibilityClient.Hit?) -> Void) {
+        queue.async {
+            guard self.generation == generation else { return }
+            let hit = self.client.shortcutWindow(eventTime: eventTime, targetPID: targetPID)
+            DispatchQueue.main.async { completion(hit) }
         }
     }
 
@@ -440,12 +650,12 @@ private final class CloseWorker {
         }
     }
 
-    func prepareObservation(hit: AccessibilityClient.Hit, generation: UInt64,
+    func prepareObservation(hit: AccessibilityClient.Hit, generation: UInt64, watchFocus: Bool = false,
                             onChange: @escaping @MainActor (CloseCancellationReason) -> Void,
                             completion: @escaping @MainActor (CloseWindowObservation?) -> Void) {
         queue.async {
             guard self.generation == generation else { return }
-            let observation = CloseWindowObservation(hit: hit, onChange: onChange)
+            let observation = CloseWindowObservation(hit: hit, watchFocus: watchFocus, onChange: onChange)
             DispatchQueue.main.async { completion(observation) }
         }
     }
@@ -473,20 +683,40 @@ private final class CloseWorker {
 /// Registration is worker-only; source activation and removal are main-thread-only.
 private final class CloseWindowObservation {
     private final class Relay {
-        let onChange: @MainActor (CloseCancellationReason) -> Void
+        var onChange: @MainActor (CloseCancellationReason) -> Void
+        var onWindowDestroyed: (@MainActor () -> Void)?
         init(_ onChange: @escaping @MainActor (CloseCancellationReason) -> Void) { self.onChange = onChange }
     }
     private let observer: AXObserver
     private let relay: Relay
+    @MainActor var onChange: @MainActor (CloseCancellationReason) -> Void {
+        get { relay.onChange }
+        set { relay.onChange = newValue }
+    }
+    @MainActor var onWindowDestroyed: (@MainActor () -> Void)? {
+        get { relay.onWindowDestroyed }
+        set { relay.onWindowDestroyed = newValue }
+    }
 
-    init?(hit: AccessibilityClient.Hit, onChange: @escaping @MainActor (CloseCancellationReason) -> Void) {
+    init?(hit: AccessibilityClient.Hit, watchFocus: Bool = false, onChange: @escaping @MainActor (CloseCancellationReason) -> Void) {
         relay = Relay(onChange)
         var result: AXObserver?
         let error = AXObserverCreate(hit.application.processIdentifier, { _, _, notification, context in
             guard let context else { return }
             let relay = Unmanaged<Relay>.fromOpaque(context).takeUnretainedValue()
-            let reason: CloseCancellationReason = notification as String == kAXSheetCreatedNotification
-                ? .blockingUI : .replacementWindow
+            if notification as String == kAXUIElementDestroyedNotification {
+                MainActor.assumeIsolated {
+                    if let onWindowDestroyed = relay.onWindowDestroyed { onWindowDestroyed() }
+                    else { relay.onChange(.windowSetChanged) }
+                }
+                return
+            }
+            let reason: CloseCancellationReason
+            switch notification as String {
+            case kAXSheetCreatedNotification: reason = .blockingUI
+            case kAXFocusedWindowChangedNotification: reason = .windowSetChanged
+            default: reason = .replacementWindow
+            }
             MainActor.assumeIsolated { relay.onChange(reason) }
         }, &result)
         guard error == .success, let result else { return nil }
@@ -496,6 +726,12 @@ private final class CloseWindowObservation {
         else { return nil }
         // Window creation support is mandatory. Sheet support varies; snapshots also detect sheets.
         AXObserverAddNotification(observer, hit.appElement, kAXSheetCreatedNotification as CFString, context)
+        if watchFocus {
+            guard AXObserverAddNotification(observer, hit.appElement, kAXFocusedWindowChangedNotification as CFString, context) == .success
+            else { return nil }
+            guard AXObserverAddNotification(observer, hit.window, kAXUIElementDestroyedNotification as CFString, context) == .success
+            else { return nil }
+        }
     }
 
     @MainActor func start() {

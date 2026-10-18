@@ -13,6 +13,7 @@ final class AccessibilityClient {
         let initialWindows: [AXUIElement]
         let buttonFrame: CGRect
         let allowsApplicationHide: Bool
+        var trigger: CloseTrigger = .windowButton
     }
 
     /// AX-only proof, kept separate from application eligibility and native event identity.
@@ -21,6 +22,7 @@ final class AccessibilityClient {
         let window: AXUIElement
         let initialWindows: [AXUIElement]
         let buttonFrame: CGRect
+        var trigger: CloseTrigger = .windowButton
     }
 
     private enum ReadError: Error { case unavailable(AXError), unexpectedValue, exceededBudget }
@@ -53,19 +55,19 @@ final class AccessibilityClient {
         AXUIElementSetMessagingTimeout(system, 0.12)
     }
 
-    func closeButton(at point: CGPoint, eventTime: TimeInterval, targetPID: pid_t) -> Hit? {
+    func closeButton(at point: CGPoint, eventTime: TimeInterval, targetPID: pid_t, includingTabs: Bool = false) -> Hit? {
         guard let app = NSRunningApplication(processIdentifier: targetPID), isEligible(app),
-              let control = captureCloseControl(at: point, eventTime: eventTime, targetPID: targetPID)
+              let control = captureCloseControl(at: point, eventTime: eventTime, targetPID: targetPID, includingTabs: includingTabs)
         else { return nil }
         // The monitor rechecks eligibility after release and immediately before termination.
         // Let it adjudicate a same-process Discord hide that arrives while capture finishes.
         // Only Discord's single, nonminimized window can use hide-on-close confirmation.
         // Every reported window counts here, including windows on other Spaces.
-        let allowsHide = HiddenCloseIntent.supports(bundleIdentifier: app.bundleIdentifier) &&
+        let allowsHide = control.trigger == .windowButton && HiddenCloseIntent.supports(bundleIdentifier: app.bundleIdentifier) &&
             control.initialWindows.count == 1 && (try? bool(control.window, kAXMinimizedAttribute)) == false
         return Hit(application: app, appElement: control.appElement, window: control.window,
                    initialWindows: control.initialWindows, buttonFrame: control.buttonFrame,
-                   allowsApplicationHide: allowsHide)
+                   allowsApplicationHide: allowsHide, trigger: control.trigger)
     }
 
     private func isEligible(_ app: NSRunningApplication) -> Bool {
@@ -74,15 +76,18 @@ final class AccessibilityClient {
                                    ownProcessID: ProcessInfo.processInfo.processIdentifier)
     }
 
-    func captureCloseControl(at point: CGPoint, eventTime: TimeInterval, targetPID: pid_t) -> CloseControl? {
+    func captureCloseControl(at point: CGPoint, eventTime: TimeInterval, targetPID: pid_t,
+                             includingTabs: Bool = false) -> CloseControl? {
         deadline = ProcessInfo.processInfo.systemUptime + 0.55
         guard ProcessInfo.processInfo.systemUptime - eventTime < 0.5 else { return nil }
         do {
             let (error, result) = findElement(system, point)
             guard error == .success, var button = result else { return nil }
+            var verifiedTabButton = false
             // Some apps expose a child of the actual button to hit testing.
             for depth in 0...4 {
                 if try value(button, kAXSubroleAttribute, optional: true) as? String == kAXCloseButtonSubrole { break }
+                if includingTabs, try isTabCloseButton(button) { verifiedTabButton = true; break }
                 guard depth < 4, let parent = try element(button, kAXParentAttribute) else { return nil }
                 button = parent
             }
@@ -103,8 +108,17 @@ final class AccessibilityClient {
                   windowValues[1] as? String == kAXStandardWindowSubrole,
                   try boolean(windowValues[2]) == false,
                   try !hasSheet(windowValues[3]),
-                  let officialButton = axElement(windowValues[4]), CFEqual(button, officialButton)
+                  let officialButton = axElement(windowValues[4])
             else { return nil }
+            if !CFEqual(button, officialButton) {
+                guard includingTabs, try verifiedTabButton || isTabCloseButton(button) else { return nil }
+                let attributes = try values(button, [kAXRoleAttribute, kAXEnabledAttribute, kAXPositionAttribute, kAXSizeAttribute])
+                guard attributes[0] as? String == kAXButtonRole, try boolean(attributes[1]),
+                      let frame = frame(position: attributes[2], size: attributes[3]), frame.contains(point)
+                else { return nil }
+                return CloseControl(appElement: appElement, window: window, initialWindows: windows,
+                                    buttonFrame: frame, trigger: .tabButton)
+            }
             let buttonValues = try values(button, [kAXSubroleAttribute, kAXRoleAttribute, kAXEnabledAttribute,
                                                    kAXPositionAttribute, kAXSizeAttribute])
             guard buttonValues[0] as? String == kAXCloseButtonSubrole,
@@ -113,6 +127,69 @@ final class AccessibilityClient {
                   let frame = frame(position: buttonValues[3], size: buttonValues[4]), frame.contains(point)
             else { return nil }
             return CloseControl(appElement: appElement, window: window, initialWindows: windows, buttonFrame: frame)
+        } catch { return nil }
+    }
+
+    /// A tab close is a button inside a tab inside a tab group. Never infer it
+    /// from an X glyph, screen position, a web page button, or a tab's title.
+    private func isTabCloseButton(_ button: AXUIElement) throws -> Bool {
+        guard try string(button, kAXRoleAttribute) == kAXButtonRole,
+              let tab = try element(button, kAXParentAttribute),
+              try string(tab, kAXRoleAttribute) == kAXRadioButtonRole,
+              let group = try element(tab, kAXParentAttribute),
+              try string(group, kAXRoleAttribute) == kAXTabGroupRole else { return false }
+        // Web pages can expose their own tab groups. Only native window chrome qualifies.
+        guard let window = try element(button, kAXWindowAttribute) else { return false }
+        var ancestor = group
+        var reachedWindow = false
+        for _ in 0..<8 {
+            guard let parent = try element(ancestor, kAXParentAttribute) else { return false }
+            if CFEqual(parent, window) { reachedWindow = true; break }
+            guard let role = try string(parent, kAXRoleAttribute),
+                  [kAXGroupRole, kAXToolbarRole, kAXScrollAreaRole].contains(role) else { return false }
+            ancestor = parent
+        }
+        guard reachedWindow else { return false }
+        if let raw = try value(tab, kAXCloseButtonAttribute, optional: true) {
+            guard let official = axElement(raw) else { return false }
+            return CFEqual(official, button)
+        }
+        // Chromium exposes its localized Close action as the child button's name,
+        // without an AXCloseButton attribute. Unknown/localized labels fail closed.
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute] {
+            if let label = try value(button, attribute, optional: true) as? String,
+               ["close", "close tab"].contains(label.lowercased()) { return true }
+        }
+        return false
+    }
+
+    func shortcutWindow(eventTime: TimeInterval, targetPID: pid_t) -> Hit? {
+        guard let app = NSRunningApplication(processIdentifier: targetPID), isEligible(app),
+              let control = captureShortcutWindow(eventTime: eventTime, targetPID: targetPID) else { return nil }
+        return Hit(application: app, appElement: control.appElement, window: control.window,
+                   initialWindows: control.initialWindows, buttonFrame: .zero,
+                   allowsApplicationHide: false, trigger: .keyboardShortcut)
+    }
+
+    func captureShortcutWindow(eventTime: TimeInterval, targetPID: pid_t) -> CloseControl? {
+        let now = ProcessInfo.processInfo.systemUptime
+        deadline = now + 0.55
+        guard targetPID > 1, eventTime.isFinite, eventTime >= 0, now >= eventTime, now - eventTime < 0.5 else { return nil }
+        do {
+            let app = AXUIElementCreateApplication(targetPID)
+            let initialWindows = try windows(app)
+            guard let window = try element(app, kAXFocusedWindowAttribute),
+                  initialWindows.contains(where: { CFEqual($0, window) }) else { return nil }
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(window, &owner) == .success, owner == targetPID else { return nil }
+            let attributes = try values(window, [kAXRoleAttribute, kAXSubroleAttribute, kAXModalAttribute,
+                                                 kAXChildrenAttribute, kAXMinimizedAttribute])
+            guard attributes[0] as? String == kAXWindowRole,
+                  attributes[1] as? String == kAXStandardWindowSubrole,
+                  try !boolean(attributes[2]), try !hasSheet(attributes[3]), try !boolean(attributes[4])
+            else { return nil }
+            return CloseControl(appElement: app, window: window, initialWindows: initialWindows,
+                                buttonFrame: .zero, trigger: .keyboardShortcut)
         } catch { return nil }
     }
 

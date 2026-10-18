@@ -93,3 +93,52 @@ final class CloseGestureTests: XCTestCase {
         XCTAssertEqual(release(gesture, x: -800, y: -200), .graceful)
     }
 }
+
+final class CloseShortcutTests: XCTestCase {
+    func testLayoutResolvedWAndModifiers() {
+        for character in ["w", "W"] {
+            XCTAssertTrue(CloseShortcut.matches(character: character, command: true, shift: false,
+                                                option: false, control: false, isRepeat: false))
+        }
+        for character: String? in [nil, "", "z", "q", "ww"] {
+            XCTAssertFalse(CloseShortcut.matches(character: character, command: true, shift: false,
+                                                 option: false, control: false, isRepeat: false))
+        }
+        for flags in [(false, false, false, false, false), (true, true, false, false, false),
+                      (true, false, true, false, false), (true, false, false, true, false),
+                      (true, false, false, false, true)] {
+            XCTAssertFalse(CloseShortcut.matches(character: "w", command: flags.0, shift: flags.1,
+                                                 option: flags.2, control: flags.3, isRepeat: flags.4))
+        }
+    }
+
+    func testTabsAndShortcutsCannotForceQuitOrInheritAnyWindowMode() {
+        for trigger in [CloseTrigger.tabButton, .keyboardShortcut] {
+            XCTAssertFalse(trigger.allowsForceQuit)
+            XCTAssertEqual(trigger.behavior(configured: .everyWindow), .lastWindow)
+            var session = CloseSession(behavior: trigger.behavior(configured: .everyWindow), startedAt: 10)
+            let survivingWindow = CloseSnapshot(windowCount: 1, targetWindowPresent: false,
+                                                 hasBlockingUI: false, isReliable: true)
+            XCTAssertEqual(session.evaluate(snapshot: survivingWindow, now: 10.1), .cancel(.remainingWindows))
+        }
+        XCTAssertTrue(CloseTrigger.windowButton.allowsForceQuit)
+        XCTAssertEqual(CloseTrigger.windowButton.behavior(configured: .everyWindow), .everyWindow)
+    }
+
+    func testShortcutPreflightPinsRecipientExpiryAndOneRequest() throws {
+        var intent = try XCTUnwrap(CloseShortcutIntent(processID: 42, startedAt: 10))
+        XCTAssertFalse(intent.isReady(at: 10.1), "Command alone never requests quit")
+        XCTAssertFalse(intent.request(processID: 43, at: 10.1))
+        XCTAssertFalse(intent.request(processID: 42, at: 9))
+        XCTAssertFalse(intent.request(processID: 42, at: .nan))
+        XCTAssertFalse(intent.request(processID: 42, at: 13))
+        XCTAssertTrue(intent.request(processID: 42, at: 10.2))
+        XCTAssertFalse(intent.request(processID: 42, at: 10.3))
+        XCTAssertFalse(intent.isReady(at: 10.1))
+        XCTAssertTrue(intent.isReady(at: 10.21))
+        XCTAssertFalse(intent.isReady(at: 11.01), "a stalled capture cannot use an old command")
+        XCTAssertFalse(intent.isReady(at: .infinity))
+        XCTAssertNil(CloseShortcutIntent(processID: 0, startedAt: 10))
+        XCTAssertNil(CloseShortcutIntent(processID: 42, startedAt: .nan))
+    }
+}

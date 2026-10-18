@@ -14,7 +14,7 @@ Regenerate `CallQuits.xcodeproj` with `xcodegen generate` only when its configur
 
 ## Safety constraints
 
-- Only a verified red close-button gesture supplies quit intent. A window disappearing by itself does not.
+- Only a verified red/window-tab close gesture or a native-recipient-matched ⌘W supplies quit intent. Tab buttons must belong to native tab chrome. Tabs and shortcuts use last-window graceful quit only. A window disappearing by itself does not.
 - Graceful quit must preserve the app's opportunity to cancel or save. Never upgrade it automatically to force quit.
 - A failed Accessibility read is unknown, never proof that there are zero windows.
 - Account for minimized windows, other Spaces, sheets, replacement windows, process reuse, and stale callbacks.
