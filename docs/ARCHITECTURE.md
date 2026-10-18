@@ -27,7 +27,7 @@ The finite sampling after a close gesture is intentionally conservative: cancell
 
 ## Tabs and ⌘W
 
-`CloseTrigger` keeps tab buttons and keyboard shortcuts on last-window graceful quit, regardless of the red button's configured mode. Neither can authorize force quit or Discord's hidden-window exception. The `additionalCloseMethods` preference is enabled by default for source builds and can be disabled independently.
+`CloseTrigger` keeps tab buttons and keyboard shortcuts on last-window graceful quit, regardless of the red button's configured mode. Neither can authorize force quit or Discord's hidden-window exception. The `additionalCloseMethods` preference is enabled by default starting in v0.1.5 and can be disabled independently.
 
 Tab clicks keep the existing native down/up identity, modifier, movement, freshness and AX window checks. The hit must be a button inside a radio-button tab inside a native tab group. Only bounded group, toolbar or scroll-area ancestors may lead from that group to the same window; a web area's controls cannot qualify. An explicit tab `AXCloseButton` relationship is accepted. For providers such as Chromium that expose only the button's accessible name, the exact labels “Close” and “Close tab” are supported. Other localized labels are skipped. Tab titles and page contents are never read. The browser must close the window when its last tab closes; an empty retained browser window still counts.
 
