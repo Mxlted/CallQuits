@@ -5,6 +5,53 @@ private func fixtureLog(_ event: String) {
     fflush(stdout)
 }
 
+// Browser-style hit testing can expose a rendering group beside the semantic
+// tab group. Keep the real NSButton and its normal action in the tab hierarchy.
+private final class FixtureTabCloseButton: NSButton {
+    weak var renderingHit: NSAccessibilityElement?
+
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+        renderingHit ?? super.accessibilityHitTest(point)
+    }
+}
+
+private final class FixtureTabRenderingElement: NSAccessibilityElement {
+    weak var tabGroup: NSView?
+
+    override func accessibilityFrame() -> NSRect { tabGroup?.accessibilityFrame() ?? .zero }
+    override func accessibilityWindow() -> Any? { tabGroup?.window }
+    override func accessibilityTopLevelUIElement() -> Any? { tabGroup?.window }
+}
+
+private final class FixtureTabStrip: NSStackView {
+    private let tabGroup: NSView
+    private let renderingHit = FixtureTabRenderingElement()
+
+    init(tabGroup: NSView, closeButton: FixtureTabCloseButton) {
+        self.tabGroup = tabGroup
+        super.init(frame: .zero)
+        addArrangedSubview(tabGroup)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        renderingHit.tabGroup = tabGroup
+        renderingHit.setAccessibilityRole(.group)
+        renderingHit.setAccessibilityParent(self)
+        renderingHit.setAccessibilityChildren([])
+        closeButton.renderingHit = renderingHit
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func accessibilityChildren() -> [Any]? { [tabGroup, renderingHit] }
+
+    override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+        if tabGroup.accessibilityFrame().contains(point) {
+            return renderingHit
+        }
+        return super.accessibilityHitTest(point)
+    }
+}
+
 // A disposable app that deliberately stays running after its last window closes.
 // All its document state is in memory; no user documents are opened or written.
 final class FixtureDelegate: NSObject, NSApplicationDelegate {
@@ -110,13 +157,14 @@ final class FixtureWindowController: NSWindowController, NSWindowDelegate {
         let buttons = NSStackView(views: [new, sheet])
         buttons.spacing = 12
         // Native AX tab hierarchy with a Close child, matching a browser's tab strip.
-        let tab = NSStackView(views: [tabLabel, NSButton(title: "Close", target: self, action: #selector(closeTab))])
+        let tabClose = FixtureTabCloseButton(title: "Close", target: self, action: #selector(closeTab))
+        let tab = NSStackView(views: [tabLabel, tabClose])
         tab.setAccessibilityElement(true)
         tab.setAccessibilityRole(.radioButton)
         let tabs = NSStackView(views: [tab])
         tabs.setAccessibilityElement(true)
         tabs.setAccessibilityRole(.tabGroup)
-        let tabRow = NSStackView(views: [tabs, NSButton(title: "New Tab (⌘T)", target: self, action: #selector(addTab))])
+        let tabRow = NSStackView(views: [FixtureTabStrip(tabGroup: tabs, closeButton: tabClose), NSButton(title: "New Tab (⌘T)", target: self, action: #selector(addTab))])
         tabRow.spacing = 12
         let hint = NSTextField(wrappingLabelWithString:
             "Try multiple windows, minimize one, move one to another Space, cancel a save, drag away from the red button, or use ⌘W. The File menu still works when no window is open.")

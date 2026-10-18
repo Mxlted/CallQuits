@@ -36,7 +36,7 @@ struct SettingsView: View {
             sidebar
             Rectangle().fill(Style.border).frame(width: 1)
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 18) {
                     header
                     switch pane {
                     case .behavior: behaviorContent
@@ -44,8 +44,8 @@ struct SettingsView: View {
                     case .activity: activityContent
                     }
                 }
-                .padding(30)
-                .padding(.top, 18)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color(nsColor: .windowBackgroundColor))
@@ -107,6 +107,16 @@ struct SettingsView: View {
 
             Spacer(minLength: 30)
 
+            Button {
+                model.openAccessibilitySettings()
+            } label: {
+                Label("Accessibility Settings", systemImage: "hand.raised")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.link)
+            .help("Open the macOS permission settings used by CallQuits")
+            .padding(.bottom, 16)
+
             HStack(spacing: 6) {
                 Circle()
                     .fill(model.monitorRunning ? Style.mint : Color.secondary)
@@ -128,7 +138,7 @@ struct SettingsView: View {
                 .padding(.top, 5)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 53)
+        .padding(.top, 28)
         .padding(.bottom, 22)
         .frame(width: 188)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.7))
@@ -137,12 +147,13 @@ struct SettingsView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("YOUR MENU BAR COMPANION")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(1.6)
-                    .foregroundStyle(.tertiary)
                 Text(pane.rawValue)
                     .font(.system(size: 26, weight: .bold, design: .rounded))
+                if pane == .behavior {
+                    Text("Choose how CallQuits handles your next close.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Text(model.monitorRunning ? "ACTIVE" : !model.enabled ? "PAUSED" : !model.accessibilityGranted ? "SETUP NEEDED" : "UNAVAILABLE")
@@ -159,23 +170,6 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var behaviorContent: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Call it quits.")
-                    .font(.system(size: 27, weight: .bold, design: .rounded))
-                Text("Close the window.\nLet the app go, too.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-            }
-            Spacer(minLength: 0)
-            WindowIllustration()
-        }
-        .padding(23)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Style.mint.opacity(0.07), in: RoundedRectangle(cornerRadius: 15))
-        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Style.mint.opacity(0.12)))
-
         if !model.accessibilityGranted { permissionCard }
         if model.canRetryMonitoring { monitoringRecoveryCard }
 
@@ -475,47 +469,6 @@ private struct ApplicationIcon: View {
             }
         }
         .frame(width: 28, height: 28)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct WindowIllustration: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 11)
-                .fill(Style.mint.opacity(0.09))
-                .frame(width: 155, height: 100)
-                .rotationEffect(.degrees(7))
-                .offset(x: 8, y: 0)
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 7) {
-                    ZStack {
-                        Circle().fill(Style.coral).frame(width: 17, height: 17)
-                        Image(systemName: "xmark").font(.system(size: 7, weight: .bold)).foregroundStyle(.white)
-                    }
-                    Circle().fill(Color.orange.opacity(0.55)).frame(width: 9, height: 9)
-                    Circle().fill(Style.mint.opacity(0.55)).frame(width: 9, height: 9)
-                    Spacer()
-                }
-                .padding(12)
-                Rectangle().fill(Style.border).frame(height: 1)
-                VStack(alignment: .leading, spacing: 7) {
-                    Capsule().fill(Color.secondary.opacity(0.13)).frame(width: 64, height: 5)
-                    Capsule().fill(Color.secondary.opacity(0.09)).frame(width: 102, height: 5)
-                }
-                .padding(15)
-            }
-            .frame(width: 155, height: 100, alignment: .topLeading)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
-            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Style.border))
-            .shadow(color: .black.opacity(0.06), radius: 10, y: 5)
-            Image(systemName: "cursorarrow")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(Color.primary.opacity(0.8))
-                .rotationEffect(.degrees(-12))
-                .offset(x: -39, y: -6)
-        }
-        .frame(width: 180, height: 120)
         .accessibilityHidden(true)
     }
 }

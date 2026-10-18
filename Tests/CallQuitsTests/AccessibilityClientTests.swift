@@ -571,9 +571,25 @@ final class AdditionalCloseCaptureTests: XCTestCase {
         let redButton = AXUIElementCreateApplication(720_005)
         let webArea = AXUIElementCreateApplication(720_006)
         let sheet = AXUIElementCreateApplication(720_007)
+        let buttonChild = AXUIElementCreateApplication(720_008)
+        let otherWindow = AXUIElementCreateApplication(720_009)
+        let hitGroup = AXUIElementCreateApplication(720_010)
         var label = "Close"
+        var labelAttribute = kAXTitleAttribute
         var tabRole = kAXRadioButtonRole
         var groupRole = kAXTabGroupRole
+        var ancestorRoles: [String] = [] {
+            didSet {
+                ancestors = ancestorRoles.indices.map { AXUIElementCreateApplication(pid_t(720_100 + $0)) }
+            }
+        }
+        private(set) var ancestors: [AXUIElement] = []
+        var ancestryWindow: AXUIElement?
+        var hitButtonChild = false
+        var hitElement: AXUIElement?
+        var attributeOverrides: [(AXUIElement, String, AXError, CFTypeRef?)] = []
+        var frameOverrides: [(AXUIElement, CGRect)] = []
+        var invalidFrame: AXUIElement?
         var officialTabButton = false
         var tabCloseValue: CFTypeRef?
         var webContent = false
@@ -588,11 +604,37 @@ final class AdditionalCloseCaptureTests: XCTestCase {
         var attributeNames: [(AXUIElement, String)] = []
         let point = CGPoint(x: 105, y: 105)
 
+        func setAttribute(_ element: AXUIElement, _ name: String, _ value: CFTypeRef?, error: AXError = .success) {
+            attributeOverrides.removeAll { CFEqual($0.0, element) && $0.1 == name }
+            attributeOverrides.append((element, name, error, value))
+        }
+
+        func useSiblingHit() {
+            hitElement = hitGroup
+            labelAttribute = kAXDescriptionAttribute
+            ancestorRoles = Array(repeating: kAXGroupRole, count: 6)
+            setAttribute(hitGroup, kAXRoleAttribute, kAXGroupRole as CFString)
+            setAttribute(hitGroup, kAXParentAttribute, ancestors[0])
+            setAttribute(hitGroup, kAXChildrenAttribute, [] as NSArray)
+            setAttribute(hitGroup, kAXWindowAttribute, window)
+            setAttribute(ancestors[0], kAXWindowAttribute, window)
+            setAttribute(ancestors[0], kAXChildrenAttribute, [group, hitGroup] as NSArray)
+            setAttribute(group, kAXWindowAttribute, window)
+            setAttribute(group, kAXChildrenAttribute, [tab] as NSArray)
+            setAttribute(tab, kAXWindowAttribute, window)
+            setAttribute(tab, kAXChildrenAttribute, [button] as NSArray)
+            let tabFrame = CGRect(x: 80, y: 90, width: 200, height: 40)
+            frameOverrides = [(hitGroup, tabFrame), (tab, tabFrame)]
+        }
+
         func client() -> AccessibilityClient {
             AccessibilityClient(readAttribute: { [self] element, attribute in
                 let name = attribute as String
                 attributeNames.append((element, name))
                 if let attributeError { return (attributeError, nil) }
+                if let override = attributeOverrides.first(where: { CFEqual($0.0, element) && $0.1 == name }) {
+                    return (override.2, override.3)
+                }
                 if CFEqual(element, window) {
                     switch name {
                     case kAXWindowsAttribute: return (.success, (empty ? [] : [window]) as NSArray)
@@ -605,7 +647,7 @@ final class AdditionalCloseCaptureTests: XCTestCase {
                     case kAXRoleAttribute: return (.success, kAXButtonRole as CFString)
                     case kAXParentAttribute: return (.success, tab)
                     case kAXWindowAttribute: return (.success, window)
-                    case kAXTitleAttribute: return (.success, label as CFString)
+                    case labelAttribute: return (.success, label as CFString)
                     default: break
                     }
                 }
@@ -620,13 +662,37 @@ final class AdditionalCloseCaptureTests: XCTestCase {
                 }
                 if CFEqual(element, group) {
                     if name == kAXRoleAttribute { return (.success, groupRole as CFString) }
-                    if name == kAXParentAttribute { return (.success, webContent ? webArea : window) }
+                    if name == kAXParentAttribute {
+                        return (.success, webContent ? webArea : (ancestors.first ?? ancestryWindow ?? window))
+                    }
                 }
+                if let index = ancestors.firstIndex(where: { CFEqual($0, element) }) {
+                    if name == kAXRoleAttribute { return (.success, ancestorRoles[index] as CFString) }
+                    if name == kAXParentAttribute {
+                        return (.success, index + 1 < ancestors.count ? ancestors[index + 1] : (ancestryWindow ?? window))
+                    }
+                }
+                if CFEqual(element, buttonChild) {
+                    if name == kAXRoleAttribute { return (.success, kAXImageRole as CFString) }
+                    if name == kAXParentAttribute { return (.success, button) }
+                }
+                if CFEqual(element, otherWindow), name == kAXRoleAttribute { return (.success, kAXWindowRole as CFString) }
                 if CFEqual(element, webArea), name == kAXRoleAttribute { return (.success, "AXWebArea" as CFString) }
                 if CFEqual(element, sheet), name == kAXRoleAttribute { return (.success, kAXSheetRole as CFString) }
                 return (.attributeUnsupported, nil)
             }, readAttributes: { [self] element, attributes in
                 if let attributeError { return (attributeError, nil) }
+                if attributes == [kAXPositionAttribute, kAXSizeAttribute] {
+                    if let invalidFrame, CFEqual(invalidFrame, element) {
+                        return (.success, ["invalid position" as CFString, "invalid size" as CFString])
+                    }
+                    let rectangle = frameOverrides.first(where: { CFEqual($0.0, element) })?.1
+                        ?? (CFEqual(element, button) ? CGRect(x: 100, y: 100, width: 14, height: 14) : nil)
+                    guard let rectangle else { return (.attributeUnsupported, nil) }
+                    var origin = rectangle.origin
+                    var size = rectangle.size
+                    return (.success, [AXValueCreate(.cgPoint, &origin)!, AXValueCreate(.cgSize, &size)!])
+                }
                 if CFEqual(element, window) {
                     let last: CFTypeRef = attributes.last == kAXMinimizedAttribute
                         ? (minimized ? kCFBooleanTrue! : kCFBooleanFalse!) : redButton
@@ -642,11 +708,11 @@ final class AdditionalCloseCaptureTests: XCTestCase {
                                        AXValueCreate(.cgPoint, &origin)!, AXValueCreate(.cgSize, &size)!])
                 }
                 return (.failure, nil)
-            }, findElement: { [self] _, _ in (.success, button) })
+            }, findElement: { [self] _, _ in (.success, hitElement ?? (hitButtonChild ? buttonChild : button)) })
         }
 
-        func captureTab(includingTabs: Bool = true, targetPID: pid_t? = nil) -> AccessibilityClient.CloseControl? {
-            client().captureCloseControl(at: point, eventTime: ProcessInfo.processInfo.systemUptime,
+        func captureTab(includingTabs: Bool = true, targetPID: pid_t? = nil, at point: CGPoint? = nil) -> AccessibilityClient.CloseControl? {
+            client().captureCloseControl(at: point ?? self.point, eventTime: ProcessInfo.processInfo.systemUptime,
                                          targetPID: targetPID ?? pid, includingTabs: includingTabs)
         }
 
@@ -673,6 +739,194 @@ final class AdditionalCloseCaptureTests: XCTestCase {
         fixture.officialTabButton = true
         fixture.label = "Fermer"
         XCTAssertEqual(try XCTUnwrap(fixture.captureTab()).trigger, .tabButton)
+    }
+
+    func testBraveTabCloseSupportsDescriptionAndNestedNativeGroups() throws {
+        let fixture = Fixture()
+        fixture.labelAttribute = kAXDescriptionAttribute
+        fixture.ancestorRoles = Array(repeating: kAXGroupRole, count: 6)
+        let control = try XCTUnwrap(fixture.captureTab())
+        XCTAssertEqual(control.trigger, .tabButton)
+        XCTAssertTrue(CFEqual(control.window, fixture.window))
+        XCTAssertTrue(fixture.attributeNames.contains { CFEqual($0.0, fixture.button) && $0.1 == kAXDescriptionAttribute })
+        XCTAssertFalse(fixture.attributeNames.contains { CFEqual($0.0, fixture.tab) && $0.1 == kAXTitleAttribute },
+                       "native tab recognition must not read the page title")
+    }
+
+    func testTabCloseHitChildResolvesToItsNativeButton() throws {
+        let fixture = Fixture()
+        fixture.hitButtonChild = true
+        fixture.ancestorRoles = Array(repeating: kAXGroupRole, count: 6)
+        XCTAssertEqual(try XCTUnwrap(fixture.captureTab()).trigger, .tabButton)
+        XCTAssertEqual(fixture.buttonReads, 1)
+        XCTAssertTrue(fixture.attributeNames.contains { CFEqual($0.0, fixture.buttonChild) && $0.1 == kAXParentAttribute })
+    }
+
+    func testNestedTabAncestryRejectsWebContentAndADifferentWindow() {
+        for webIndex in 0..<6 {
+            let fixture = Fixture()
+            fixture.ancestorRoles = Array(repeating: kAXGroupRole, count: 6)
+            fixture.ancestorRoles[webIndex] = "AXWebArea"
+            XCTAssertNil(fixture.captureTab(), "web ancestor at depth \(webIndex) cannot qualify as native chrome")
+            XCTAssertEqual(fixture.buttonReads, 0)
+        }
+        let fixture = Fixture()
+        fixture.ancestorRoles = Array(repeating: kAXGroupRole, count: 6)
+        fixture.ancestryWindow = fixture.otherWindow
+        XCTAssertNil(fixture.captureTab(), "the ancestry must reach the button's exact AXWindow")
+    }
+
+    func testTabAncestryHasABoundedDepth() throws {
+        let deepestSupported = Fixture()
+        deepestSupported.ancestorRoles = Array(repeating: kAXGroupRole, count: 7)
+        XCTAssertEqual(try XCTUnwrap(deepestSupported.captureTab()).trigger, .tabButton)
+
+        let tooDeep = Fixture()
+        tooDeep.ancestorRoles = Array(repeating: kAXGroupRole, count: 8)
+        XCTAssertNil(tooDeep.captureTab())
+        XCTAssertEqual(tooDeep.buttonReads, 0)
+    }
+
+    func testBraveRenderingGroupResolvesItsSiblingNativeCloseControl() throws {
+        let fixture = Fixture()
+        fixture.useSiblingHit()
+        let control = try XCTUnwrap(fixture.captureTab())
+        XCTAssertEqual(control.trigger, .tabButton)
+        XCTAssertTrue(CFEqual(control.window, fixture.window))
+        XCTAssertEqual(control.buttonFrame, CGRect(x: 100, y: 100, width: 14, height: 14))
+        XCTAssertEqual(fixture.buttonReads, 1)
+        XCTAssertFalse(fixture.attributeNames.contains { CFEqual($0.0, fixture.tab) && $0.1 == kAXTitleAttribute })
+    }
+
+    func testRenderingGroupDoesNotTurnATabBodyClickIntoCloseIntent() {
+        let fixture = Fixture()
+        fixture.useSiblingHit()
+        XCTAssertNil(fixture.captureTab(at: CGPoint(x: 160, y: 105)),
+                     "a point inside the tab but outside its real Close control is not close intent")
+        XCTAssertEqual(fixture.buttonReads, 0)
+
+        XCTAssertNil(fixture.captureTab(at: CGPoint(x: 300, y: 105)),
+                     "the hit container must contain the event point too")
+    }
+
+    func testRenderingGroupRequiresExactWindowAndParentRelationships() {
+        let mutations: [(String, (Fixture) -> Void)] = [
+            ("hit belongs to another window", { $0.setAttribute($0.hitGroup, kAXWindowAttribute, $0.otherWindow) }),
+            ("parent belongs to another window", { $0.setAttribute($0.ancestors[0], kAXWindowAttribute, $0.otherWindow) }),
+            ("parent omits the original hit", { $0.setAttribute($0.ancestors[0], kAXChildrenAttribute, [$0.group] as NSArray) }),
+            ("tab group belongs to another window", { $0.setAttribute($0.group, kAXWindowAttribute, $0.otherWindow) }),
+            ("tab group has another parent", { $0.setAttribute($0.group, kAXParentAttribute, $0.ancestors[1]) }),
+            ("tab belongs to another window", { $0.setAttribute($0.tab, kAXWindowAttribute, $0.otherWindow) }),
+            ("tab has another parent", { $0.setAttribute($0.tab, kAXParentAttribute, $0.ancestors[0]) }),
+            ("button has another parent", { $0.setAttribute($0.button, kAXParentAttribute, $0.ancestors[0]) }),
+            ("button belongs to another window", { $0.setAttribute($0.button, kAXWindowAttribute, $0.otherWindow) }),
+            ("native ancestry ends at another window", { $0.ancestryWindow = $0.otherWindow })
+        ]
+        for (reason, mutate) in mutations {
+            let fixture = Fixture()
+            fixture.useSiblingHit()
+            mutate(fixture)
+            XCTAssertNil(fixture.captureTab(), reason)
+        }
+        let wrongRecipient = Fixture()
+        wrongRecipient.useSiblingHit()
+        XCTAssertNil(wrongRecipient.captureTab(targetPID: 720_020))
+    }
+
+    func testRenderingGroupRejectsAmbiguousGroupsTabsAndButtons() {
+        for role in [kAXTabGroupRole, kAXRadioButtonRole, kAXButtonRole] {
+            let fixture = Fixture()
+            fixture.useSiblingHit()
+            let extra = fixture.webArea
+            fixture.setAttribute(extra, kAXRoleAttribute, role as CFString)
+            fixture.frameOverrides.append((extra, CGRect(x: 100, y: 100, width: 14, height: 14)))
+            switch role {
+            case kAXTabGroupRole:
+                fixture.setAttribute(fixture.ancestors[0], kAXChildrenAttribute, [fixture.group, extra, fixture.hitGroup] as NSArray)
+            case kAXRadioButtonRole:
+                fixture.setAttribute(fixture.group, kAXChildrenAttribute, [fixture.tab, extra] as NSArray)
+            default:
+                fixture.setAttribute(fixture.tab, kAXChildrenAttribute, [fixture.button, extra] as NSArray)
+            }
+            XCTAssertNil(fixture.captureTab(), "overlapping \(role) candidates must not choose the first")
+            XCTAssertEqual(fixture.buttonReads, 0)
+        }
+    }
+
+    func testRenderingGroupDoesNotSearchAboveTheOriginalHitOrThroughWebContent() {
+        let nonLeaf = Fixture()
+        nonLeaf.useSiblingHit()
+        nonLeaf.setAttribute(nonLeaf.hitGroup, kAXChildrenAttribute, [nonLeaf.buttonChild] as NSArray)
+        XCTAssertNil(nonLeaf.captureTab(), "only the measured leaf rendering-group shape is eligible")
+
+        let nestedHit = Fixture()
+        nestedHit.useSiblingHit()
+        nestedHit.hitElement = nestedHit.buttonChild
+        nestedHit.setAttribute(nestedHit.buttonChild, kAXParentAttribute, nestedHit.hitGroup)
+        XCTAssertNil(nestedHit.captureTab(), "walking upward must not retry sibling resolution at a different element")
+
+        for index in 0..<6 {
+            let web = Fixture()
+            web.useSiblingHit()
+            web.ancestorRoles[index] = "AXWebArea"
+            XCTAssertNil(web.captureTab(), "web ancestor at depth \(index) is not native tab chrome")
+        }
+    }
+
+    func testRenderingGroupCannotIgnoreAnUnreadableCompetingRole() {
+        for level in 0..<3 {
+            let fixture = Fixture()
+            fixture.useSiblingHit()
+            let extra = fixture.webArea
+            fixture.setAttribute(extra, kAXRoleAttribute, NSNumber(value: 1))
+            switch level {
+            case 0:
+                fixture.setAttribute(fixture.ancestors[0], kAXChildrenAttribute, [fixture.group, extra, fixture.hitGroup] as NSArray)
+            case 1:
+                fixture.setAttribute(fixture.group, kAXChildrenAttribute, [fixture.tab, extra] as NSArray)
+            default:
+                fixture.setAttribute(fixture.tab, kAXChildrenAttribute, [fixture.button, extra] as NSArray)
+            }
+            XCTAssertNil(fixture.captureTab(), "a malformed competing role cannot establish a unique control")
+        }
+    }
+
+    func testRenderingGroupFailsClosedForUnreadableMalformedOrOversizedTrees() {
+        let mutations: [(String, (Fixture) -> Void)] = [
+            ("unreadable hit children", { $0.setAttribute($0.hitGroup, kAXChildrenAttribute, nil, error: .cannotComplete) }),
+            ("malformed siblings", { $0.setAttribute($0.ancestors[0], kAXChildrenAttribute, "not children" as CFString) }),
+            ("malformed tab member", { $0.setAttribute($0.group, kAXChildrenAttribute, ["not an element"] as NSArray) }),
+            ("too many tabs", { $0.setAttribute($0.group, kAXChildrenAttribute, Array(repeating: $0.tab, count: 65) as NSArray) }),
+            ("unreadable candidate role", { $0.setAttribute($0.button, kAXRoleAttribute, nil, error: .cannotComplete) }),
+            ("invalid hit frame", { $0.invalidFrame = $0.hitGroup }),
+            ("invalid tab frame", { $0.invalidFrame = $0.tab }),
+            ("invalid button frame", { $0.invalidFrame = $0.button })
+        ]
+        for (reason, mutate) in mutations {
+            let fixture = Fixture()
+            fixture.useSiblingHit()
+            mutate(fixture)
+            XCTAssertNil(fixture.captureTab(), reason)
+        }
+    }
+
+    func testRenderingGroupRetainsCloseControlAndSettingProtections() {
+        let mutations: [(Fixture) -> Void] = [
+            { $0.enabled = false }, { $0.blocking = true }, { $0.empty = true },
+            { $0.label = "Mute" }, { $0.label = "x" }, { $0.label = "Fermer" },
+            { $0.tabCloseValue = $0.redButton }, { $0.tabCloseValue = "invalid control" as CFString }
+        ]
+        for mutate in mutations {
+            let fixture = Fixture()
+            fixture.useSiblingHit()
+            mutate(fixture)
+            XCTAssertNil(fixture.captureTab())
+        }
+        let disabledSetting = Fixture()
+        disabledSetting.useSiblingHit()
+        XCTAssertNil(disabledSetting.captureTab(includingTabs: false))
+        XCTAssertFalse(disabledSetting.attributeNames.contains { $0.1 == kAXChildrenAttribute },
+                       "disabled tab support must not inspect sibling controls")
     }
 
     func testTabCaptureRejectsOrdinaryButtonsWebTabsUnknownLabelsAndDisabledControls() {

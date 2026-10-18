@@ -88,6 +88,12 @@ final class AccessibilityClient {
             for depth in 0...4 {
                 if try value(button, kAXSubroleAttribute, optional: true) as? String == kAXCloseButtonSubrole { break }
                 if includingTabs, try isTabCloseButton(button) { verifiedTabButton = true; break }
+                if includingTabs, depth == 0,
+                   let resolved = try tabCloseButton(inHitContainer: button, at: point, targetPID: targetPID) {
+                    button = resolved
+                    verifiedTabButton = true
+                    break
+                }
                 guard depth < 4, let parent = try element(button, kAXParentAttribute) else { return nil }
                 button = parent
             }
@@ -161,6 +167,64 @@ final class AccessibilityClient {
                ["close", "close tab"].contains(label.lowercased()) { return true }
         }
         return false
+    }
+
+    /// Chromium can hit-test a leaf rendering group beside its accessible tab group.
+    /// Resolve only that immediate sibling relationship, using the real close control's
+    /// AX frame and native ancestry. Never search the window or infer a control from an X.
+    private func tabCloseButton(inHitContainer hit: AXUIElement, at point: CGPoint,
+                                targetPID: pid_t) throws -> AXUIElement? {
+        guard try string(hit, kAXRoleAttribute) == kAXGroupRole,
+              let parent = try element(hit, kAXParentAttribute),
+              try string(parent, kAXRoleAttribute) == kAXGroupRole,
+              try children(hit).isEmpty,
+              let window = try element(hit, kAXWindowAttribute),
+              try controlFrame(hit).contains(point) else { return nil }
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(window, &owner) == .success, owner == targetPID,
+              let parentWindow = try element(parent, kAXWindowAttribute), CFEqual(parentWindow, window)
+        else { return nil }
+        let siblings = try children(parent)
+        guard siblings.contains(where: { CFEqual($0, hit) }) else { return nil }
+        let groups = try siblings.filter {
+            guard let role = try string($0, kAXRoleAttribute) else { throw ReadError.unexpectedValue }
+            return role == kAXTabGroupRole
+        }
+        guard groups.count == 1, let group = groups.first,
+              let groupParent = try element(group, kAXParentAttribute), CFEqual(groupParent, parent),
+              let groupWindow = try element(group, kAXWindowAttribute), CFEqual(groupWindow, window)
+        else { return nil }
+
+        // Require one actual tab and one actual button at the point. Overlapping,
+        // unreadable or unrelated controls fail closed rather than choosing the first.
+        let tabs = try children(group).filter {
+            guard let role = try string($0, kAXRoleAttribute) else { throw ReadError.unexpectedValue }
+            return try role == kAXRadioButtonRole && controlFrame($0).contains(point)
+        }
+        guard tabs.count == 1, let tab = tabs.first,
+              let tabParent = try element(tab, kAXParentAttribute), CFEqual(tabParent, group),
+              let tabWindow = try element(tab, kAXWindowAttribute), CFEqual(tabWindow, window)
+        else { return nil }
+        let buttons = try children(tab).filter {
+            guard let role = try string($0, kAXRoleAttribute) else { throw ReadError.unexpectedValue }
+            return try role == kAXButtonRole && controlFrame($0).contains(point)
+        }
+        guard buttons.count == 1, let button = buttons.first,
+              let buttonParent = try element(button, kAXParentAttribute), CFEqual(buttonParent, tab),
+              let buttonWindow = try element(button, kAXWindowAttribute), CFEqual(buttonWindow, window),
+              try isTabCloseButton(button) else { return nil }
+        return button
+    }
+
+    private func children(_ object: AXUIElement) throws -> [AXUIElement] {
+        guard let raw = try value(object, kAXChildrenAttribute) else { throw ReadError.unexpectedValue }
+        return try elements(raw)
+    }
+
+    private func controlFrame(_ object: AXUIElement) throws -> CGRect {
+        let attributes = try values(object, [kAXPositionAttribute, kAXSizeAttribute])
+        guard let result = frame(position: attributes[0], size: attributes[1]) else { throw ReadError.unexpectedValue }
+        return result
     }
 
     func shortcutWindow(eventTime: TimeInterval, targetPID: pid_t) -> Hit? {

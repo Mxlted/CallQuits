@@ -14,8 +14,10 @@ First-launch approval is separate from Accessibility permission. A managed Mac m
 
 ## Enable Accessibility
 
+Source builds include **Accessibility Settings** in the settings sidebar, available from every pane. It opens the macOS permission page directly, even after access has already been granted.
+
 1. Move `CallQuits.app` to **Applications** before granting access.
-2. Open **System Settings → Privacy & Security → Accessibility**.
+2. Open **System Settings → Privacy & Security → Accessibility** (called **Device Control and Data Access** on macOS 27).
 3. Enable CallQuits. If it is missing, use **+** to select it from Applications.
 4. Reopen CallQuits if its status has not updated.
 
