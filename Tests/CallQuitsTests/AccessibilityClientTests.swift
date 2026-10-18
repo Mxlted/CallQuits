@@ -627,60 +627,71 @@ final class AdditionalCloseCaptureTests: XCTestCase {
             frameOverrides = [(hitGroup, tabFrame), (tab, tabFrame)]
         }
 
+        private func readAttribute(_ element: AXUIElement, _ attribute: CFString) -> (AXError, CFTypeRef?) {
+            let name = attribute as String
+            attributeNames.append((element, name))
+            if let attributeError { return (attributeError, nil) }
+            for entry in attributeOverrides where CFEqual(entry.0, element) && entry.1 == name {
+                return (entry.2, entry.3)
+            }
+            if CFEqual(element, window) {
+                switch name {
+                case kAXWindowsAttribute:
+                    if empty { return (.success, [] as NSArray) }
+                    return (.success, [window] as NSArray)
+                case kAXFocusedWindowAttribute:
+                    if let focusedWindow { return (.success, focusedWindow) }
+                    return (.success, window)
+                default: break
+                }
+            }
+            if CFEqual(element, button) {
+                switch name {
+                case kAXRoleAttribute: return (.success, kAXButtonRole as CFString)
+                case kAXParentAttribute: return (.success, tab)
+                case kAXWindowAttribute: return (.success, window)
+                default: break
+                }
+                if name == labelAttribute { return (.success, label as CFString) }
+            }
+            if CFEqual(element, tab) {
+                switch name {
+                case kAXRoleAttribute: return (.success, tabRole as CFString)
+                case kAXParentAttribute: return (.success, group)
+                case kAXCloseButtonAttribute where tabCloseValue != nil: return (.success, tabCloseValue)
+                case kAXCloseButtonAttribute where officialTabButton: return (.success, button)
+                default: break
+                }
+            }
+            if CFEqual(element, group) {
+                if name == kAXRoleAttribute { return (.success, groupRole as CFString) }
+                if name == kAXParentAttribute {
+                    if webContent { return (.success, webArea) }
+                    if let first = ancestors.first { return (.success, first) }
+                    if let ancestryWindow { return (.success, ancestryWindow) }
+                    return (.success, window)
+                }
+            }
+            if let index = ancestors.firstIndex(where: { CFEqual($0, element) }) {
+                if name == kAXRoleAttribute { return (.success, ancestorRoles[index] as CFString) }
+                if name == kAXParentAttribute {
+                    if index + 1 < ancestors.count { return (.success, ancestors[index + 1]) }
+                    if let ancestryWindow { return (.success, ancestryWindow) }
+                    return (.success, window)
+                }
+            }
+            if CFEqual(element, buttonChild) {
+                if name == kAXRoleAttribute { return (.success, kAXImageRole as CFString) }
+                if name == kAXParentAttribute { return (.success, button) }
+            }
+            if CFEqual(element, otherWindow), name == kAXRoleAttribute { return (.success, kAXWindowRole as CFString) }
+            if CFEqual(element, webArea), name == kAXRoleAttribute { return (.success, "AXWebArea" as CFString) }
+            if CFEqual(element, sheet), name == kAXRoleAttribute { return (.success, kAXSheetRole as CFString) }
+            return (.attributeUnsupported, nil)
+        }
+
         func client() -> AccessibilityClient {
-            AccessibilityClient(readAttribute: { [self] element, attribute in
-                let name = attribute as String
-                attributeNames.append((element, name))
-                if let attributeError { return (attributeError, nil) }
-                if let override = attributeOverrides.first(where: { CFEqual($0.0, element) && $0.1 == name }) {
-                    return (override.2, override.3)
-                }
-                if CFEqual(element, window) {
-                    switch name {
-                    case kAXWindowsAttribute: return (.success, (empty ? [] : [window]) as NSArray)
-                    case kAXFocusedWindowAttribute: return (.success, focusedWindow ?? window)
-                    default: break
-                    }
-                }
-                if CFEqual(element, button) {
-                    switch name {
-                    case kAXRoleAttribute: return (.success, kAXButtonRole as CFString)
-                    case kAXParentAttribute: return (.success, tab)
-                    case kAXWindowAttribute: return (.success, window)
-                    case labelAttribute: return (.success, label as CFString)
-                    default: break
-                    }
-                }
-                if CFEqual(element, tab) {
-                    switch name {
-                    case kAXRoleAttribute: return (.success, tabRole as CFString)
-                    case kAXParentAttribute: return (.success, group)
-                    case kAXCloseButtonAttribute where tabCloseValue != nil: return (.success, tabCloseValue)
-                    case kAXCloseButtonAttribute where officialTabButton: return (.success, button)
-                    default: break
-                    }
-                }
-                if CFEqual(element, group) {
-                    if name == kAXRoleAttribute { return (.success, groupRole as CFString) }
-                    if name == kAXParentAttribute {
-                        return (.success, webContent ? webArea : (ancestors.first ?? ancestryWindow ?? window))
-                    }
-                }
-                if let index = ancestors.firstIndex(where: { CFEqual($0, element) }) {
-                    if name == kAXRoleAttribute { return (.success, ancestorRoles[index] as CFString) }
-                    if name == kAXParentAttribute {
-                        return (.success, index + 1 < ancestors.count ? ancestors[index + 1] : (ancestryWindow ?? window))
-                    }
-                }
-                if CFEqual(element, buttonChild) {
-                    if name == kAXRoleAttribute { return (.success, kAXImageRole as CFString) }
-                    if name == kAXParentAttribute { return (.success, button) }
-                }
-                if CFEqual(element, otherWindow), name == kAXRoleAttribute { return (.success, kAXWindowRole as CFString) }
-                if CFEqual(element, webArea), name == kAXRoleAttribute { return (.success, "AXWebArea" as CFString) }
-                if CFEqual(element, sheet), name == kAXRoleAttribute { return (.success, kAXSheetRole as CFString) }
-                return (.attributeUnsupported, nil)
-            }, readAttributes: { [self] element, attributes in
+            AccessibilityClient(readAttribute: readAttribute, readAttributes: { [self] element, attributes in
                 if let attributeError { return (attributeError, nil) }
                 if attributes == [kAXPositionAttribute, kAXSizeAttribute] {
                     if let invalidFrame, CFEqual(invalidFrame, element) {
